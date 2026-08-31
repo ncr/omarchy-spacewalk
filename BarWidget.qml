@@ -3,8 +3,13 @@ import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 
-// Pigułka na barze: ikona, kroki dnia, cienki pasek postępu do celu.
-// Klik otwiera panel; kliknięcie środkowym startuje albo zatrzymuje taśmę.
+// Pigułka na barze: chodzik i kroki dnia w jednym napisie, pod nim cienki pasek
+// postępu do celu. Klik otwiera panel; klik środkowym startuje albo zatrzymuje
+// taśmę.
+//
+// Napis idzie przez WidgetButton — ten sam komponent, na którym stoją zegar
+// i układ klawiatury. Własne liczenie wysokości stawiało pigułkę wyżej niż
+// sąsiadów, bo bar układa sloty inaczej, niż wynikałoby z samego barSize.
 BarWidget {
   id: root
   moduleName: "ncr.treadmill"
@@ -13,13 +18,14 @@ BarWidget {
   readonly property int goal: service ? service.dailyGoal : 10000
   readonly property int steps: service ? service.daySteps : 0
   readonly property real progress: Model.progress(steps, goal)
+  readonly property string glyph: service && service.walking ? "󰗇" : "󰖃"
 
   function injectPanel() {
     var target = panelLoader.item
     if (!target) return
     if ("bar" in target) target.bar = root.bar
     if ("settings" in target) target.settings = root.settings
-    if ("anchorItem" in target) target.anchorItem = pill
+    if ("anchorItem" in target) target.anchorItem = button
     if ("hostWidget" in target) target.hostWidget = root
     if ("service" in target) target.service = root.service
   }
@@ -39,8 +45,8 @@ BarWidget {
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
   function closeForPopoutSwitch() { if (panelLoader.item) panelLoader.item.closeForPopoutSwitch() }
 
-  implicitWidth: pill.implicitWidth
-  implicitHeight: bar ? bar.barSize : pill.implicitHeight
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
 
   onBarChanged: { injectPanel(); pushSettings() }
   onSettingsChanged: { injectPanel(); pushSettings() }
@@ -57,69 +63,36 @@ BarWidget {
     }
   }
 
-  Item {
-    id: pill
-    anchors.fill: parent
-    implicitWidth: pillRow.implicitWidth + Style.space(17)
-    implicitHeight: parent ? parent.height : Style.space(24)
+  WidgetButton {
+    id: button
+    bar: root.bar
+    text: root.glyph + " " + Model.formatSteps(root.steps)
+    dimmed: !(root.service && root.service.connected)
+    tooltipText: root.service && root.service.connected
+                 ? "" : "bieżnia nieosiągalna — pstryknij wyłącznikiem"
 
-    // Rząd jest wyśrodkowany sam, a pasek postępu wisi pod nim na kotwicy do
-    // dołu. Wspólna kolumna centrowałaby rząd RAZEM z paskiem, przez co tekst
-    // i ikona siedziały wyżej niż środek baru — i skakały, gdy pasek się
-    // pojawiał albo znikał.
-    Row {
-      id: pillRow
-      anchors.centerIn: parent
-      spacing: Style.space(6)
-      height: Math.max(icon.implicitHeight, stepsText.implicitHeight)
-
-      Text {
-        id: icon
-        anchors.verticalCenter: parent.verticalCenter
-        text: root.service && root.service.walking ? "󰗇" : "󰖃"
-        color: root.bar ? root.bar.barForeground : Color.foreground
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
-        font.pixelSize: Style.font.body + 2
-        opacity: root.service && root.service.connected ? 1.0 : 0.45
-      }
-
-      Text {
-        id: stepsText
-        anchors.verticalCenter: parent.verticalCenter
-        text: Model.formatSteps(root.steps)
-        color: root.bar ? root.bar.barForeground : Color.foreground
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
-        font.pixelSize: Style.font.body
+    onPressed: function(b) {
+      if (!root.service) return
+      if (b === Qt.MiddleButton) {
+        if (root.service.walking) root.service.stop()
+        else root.service.start()
+      } else {
+        root.togglePanel()
       }
     }
 
-    // Postęp do celu: sama wypełniona część, bez szarej ścieżki pod spodem —
-    // pusta ścieżka na całej szerokości czytała się jak podkreślenie pigułki.
+    // Postęp do celu: sama wypełniona część, bez ścieżki pod spodem — pusta
+    // ścieżka na całej szerokości czytała się jak podkreślenie pigułki.
     Rectangle {
-      anchors.horizontalCenter: pillRow.horizontalCenter
-      anchors.top: pillRow.bottom
-      anchors.topMargin: Style.space(2)
-      width: pillRow.width * root.progress
+      anchors.horizontalCenter: parent.horizontalCenter
+      anchors.bottom: parent.bottom
+      anchors.bottomMargin: Style.space(5)
+      width: Math.round(button.labelWidth * root.progress)
       height: Style.space(2)
       radius: height / 2
       visible: root.progress > 0
       color: root.progress >= 1 ? (root.bar ? root.bar.urgent : Color.urgent)
                                 : (root.bar ? root.bar.barForeground : Color.foreground)
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      acceptedButtons: Qt.LeftButton | Qt.MiddleButton
-      hoverEnabled: true
-      onClicked: function(mouse) {
-        if (!root.service) return
-        if (mouse.button === Qt.MiddleButton) {
-          if (root.service.walking) root.service.stop()
-          else root.service.start()
-        } else {
-          root.togglePanel()
-        }
-      }
     }
   }
 }
