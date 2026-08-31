@@ -38,18 +38,32 @@ wpisz adres: `http://100.90.167.96:8787`.
 
 1. **Pobierz zawartość URL** — `http://spawner:8787/pending`
 2. **Pobierz wartość dla** `sessions` **w** Zawartość URL
-3. **Powtórz dla każdej rzeczy w** Wartość ze słownika, a w środku:
+3. **Powtórz dla każdej rzeczy w** Wartość ze słownika. Najpierw wszystkie odczyty
+   z nazwanymi zmiennymi, dopiero potem zapisy — inaczej wychodzą zera (dlaczego,
+   niżej):
    - **Pobierz wartość dla** `end_text` **w** Powtarzana rzecz
-   - **Uzyskaj daty z wejścia** ← ta akcja zamienia tekst na datę. Bez niej
+   - **Uzyskaj daty z wejścia** ← zamienia tekst na datę. Bez niej
      „Zarejestruj próbkę zdrowia" dostaje napis zamiast daty i skrót staje.
-   - **Pobierz wartość dla** `steps` **w** Powtarzana rzecz
-   - **Zarejestruj próbkę zdrowia**: typ *Kroki*, wartość ← ta liczba,
-     data ← Daty (wynik kroku z datą)
-   - **Pobierz wartość dla** `distance_m` → **Zarejestruj próbkę zdrowia**:
-     typ *Dystans marszu i biegu*, jednostka *metry*
-   - **Pobierz wartość dla** `kcal` → **Zarejestruj próbkę zdrowia**:
-     typ *Aktywna energia*, jednostka *kcal*
-4. Po pętli: **Pobierz zawartość URL** — `http://spawner:8787/ack-all`
+   - **Ustaw zmienną** `data`
+   - **Pobierz wartość dla** `steps` → **Ustaw zmienną** `kroki`
+   - **Pobierz wartość dla** `distance_m` → **Ustaw zmienną** `metry`
+   - **Pobierz wartość dla** `kcal` → **Ustaw zmienną** `kalorie`
+   - **Zarejestruj próbkę zdrowia**: typ *Kroki*, wartość ← `kroki`, data ← `data`
+   - **Zarejestruj próbkę zdrowia**: typ *Dystans marszu i biegu*, jednostka *metry*,
+     wartość ← `metry`, data ← `data`
+   - **Zarejestruj próbkę zdrowia**: typ *Aktywna energia*, jednostka *kcal*,
+     wartość ← `kalorie`, data ← `data`
+4. Po pętli — **poza nią**, na samym końcu skrótu: **Pobierz zawartość URL**
+   → `http://spawner:8787/ack-all`
+
+Dwie rzeczy, na których łatwo się wyłożyć:
+
+- **Wartość w każdej próbce trzeba wstawić jawnie.** Zostawione puste pole bierze wejście
+  z poprzedniej akcji, a gdy poprzednia jest zapisem próbki, wejście jest puste → zero.
+- **Każde „Pobierz wartość dla" tworzy zmienną o tej samej nazwie**, więc bez nazwanych
+  zmiennych łatwo wskazać nie tę, co trzeba.
+
+Dystans wysyłaj w metrach: 30 m w kilometrach to 0,03 i wygląda jak zero.
 
 Typu w akcji „Zarejestruj próbkę zdrowia" nie da się podać zmienną — stąd trzy osobne
 akcje. Za pierwszym uruchomieniem iOS zapyta o zgodę na zapis do Zdrowia; bez niej akcja
