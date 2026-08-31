@@ -45,13 +45,13 @@ Panel {
 
   readonly property string stateLabel: {
     if (!service) return "brak serwisu"
-    switch (service.state) {
+    switch (service.linkState) {
       case "connected": return service.walking ? "idzie" : "połączona, stoi"
       case "connecting": return "łączę..."
       case "scanning": return "szukam bieżni..."
       case "not_found": return "nie znalazłem bieżni"
       case "disconnected": return "rozłączona"
-      default: return service.state
+      default: return service.linkState
     }
   }
 

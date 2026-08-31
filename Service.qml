@@ -20,8 +20,9 @@ Item {
   property real strideMeters: 0
 
   // Stan czytany przez widget i panel.
-  property string state: "starting"      // starting | scanning | connecting | connected | disconnected | not_found
-  property bool connected: state === "connected"
+  // Nie „state": to wbudowana właściwość Item i własny mechanizm stanów Qt.
+  property string linkState: "starting"  // starting | scanning | connecting | connected | disconnected | not_found
+  property bool connected: linkState === "connected"
   property real speed: 0
   property real incline: 0
   property int daySteps: 0
@@ -32,6 +33,7 @@ Item {
   property int sessionElapsedS: 0
   property bool walking: false
   property string lastError: ""
+  property int linesSeen: 0
 
   // Dwie próbki kroków ze znacznikiem czasu — tempo liczy się z ostatniej minuty,
   // nie ze średniej sesji, żeby po przerwie prognoza reagowała od razu.
@@ -91,6 +93,7 @@ Item {
   function handleLine(line) {
     var text = String(line).trim()
     if (text === "") return
+    linesSeen++
     var msg
     try {
       msg = JSON.parse(text)
@@ -99,7 +102,7 @@ Item {
       return
     }
     if (msg.t === "status") {
-      state = msg.state
+      linkState = msg.state
       if (msg.state !== "connected") walking = false
     } else if (msg.t === "error") {
       lastError = msg.msg || ""
@@ -128,9 +131,34 @@ Item {
     if (msg.day_elapsed_s !== undefined) dayElapsedS = msg.day_elapsed_s
   }
 
+  // Uruchamiany dopiero po zbudowaniu obiektu: przy `running: true` wpisanym
+  // wprost proces rusza, zanim stdout dostanie swój SplitParser, i pierwsze
+  // (a w praktyce wszystkie) linie przepadają.
+  Component.onCompleted: bridge.running = true
+
+  // Podgląd stanu z terminala: `omarchy-shell treadmill state`.
+  // console.log z pluginu użytkownika nie trafia do dziennika systemowego,
+  // więc to jedyny sposób, żeby zajrzeć serwisowi do środka na żywo.
+  IpcHandler {
+    target: "treadmill"
+
+    function dump(): string {
+      return JSON.stringify({
+        linkState: root.linkState, linesSeen: root.linesSeen, speed: root.speed,
+        incline: root.incline, walking: root.walking, daySteps: root.daySteps,
+        dayKcal: root.dayKcal, dayElapsedS: root.dayElapsedS,
+        dayDistanceM: root.dayDistanceM, lastError: root.lastError
+      })
+    }
+
+    function start(): string { root.start(); return "ok" }
+    function stop(): string { root.stop(); return "ok" }
+    function speed(kmh: real): string { root.setSpeed(kmh); return "ok" }
+    function incline(percent: real): string { root.setIncline(percent); return "ok" }
+  }
+
   Process {
     id: bridge
-    running: true
     stdinEnabled: true
     command: {
       var argv = ["uv", "run", "--script", root.scriptPath]
@@ -141,7 +169,7 @@ Item {
     stdout: SplitParser { onRead: function(line) { root.handleLine(line) } }
     stderr: SplitParser { onRead: function(line) { root.lastError = String(line) } }
     onExited: function(code) {
-      root.state = "disconnected"
+      root.linkState = "disconnected"
       root.walking = false
       // Most nie powinien kończyć pracy — sam wznawia połączenie. Jak jednak
       // padnie (brak uv, błąd składni), podnosimy go po chwili, nie w pętli.

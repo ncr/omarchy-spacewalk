@@ -60,27 +60,36 @@ BarWidget {
   Item {
     id: pill
     anchors.fill: parent
-    implicitWidth: content.implicitWidth + Style.space(17)
+    implicitWidth: content.width + Style.space(17)
     implicitHeight: parent ? parent.height : Style.space(24)
 
     Column {
       id: content
       anchors.centerIn: parent
       spacing: Style.space(2)
+      // Szerokość bierze się z rzędu, nie z kotwic dzieci: element wyśrodkowany
+      // kotwicą nie daje kolumnie rozmiaru, więc widget wychodził zerowej
+      // szerokości i znikał z baru.
+      width: pillRow.implicitWidth
 
       Row {
+        id: pillRow
         spacing: Style.space(6)
-        anchors.horizontalCenter: parent.horizontalCenter
+        height: Math.max(icon.implicitHeight, stepsText.implicitHeight)
 
         Text {
+          id: icon
+          anchors.verticalCenter: parent.verticalCenter
           text: root.service && root.service.walking ? "󰗇" : "󰖃"
           color: root.bar ? root.bar.barForeground : Color.foreground
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
-          font.pixelSize: Style.font.icon
+          font.pixelSize: Style.font.body + 2
           opacity: root.service && root.service.connected ? 1.0 : 0.45
         }
 
         Text {
+          id: stepsText
+          anchors.verticalCenter: parent.verticalCenter
           text: Model.formatSteps(root.steps)
           color: root.bar ? root.bar.barForeground : Color.foreground
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -88,20 +97,16 @@ BarWidget {
         }
       }
 
-      // Pasek do celu — cienki, żeby nie rozpychał baru.
+      // Postęp do celu: sama wypełniona część, bez szarej ścieżki pod spodem —
+      // pusta ścieżka na całej szerokości czytała się jak podkreślenie pigułki.
       Rectangle {
-        width: content.width
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: content.width * root.progress
         height: Style.space(2)
         radius: height / 2
-        color: Qt.rgba(1, 1, 1, 0.18)
-
-        Rectangle {
-          width: parent.width * root.progress
-          height: parent.height
-          radius: parent.radius
-          color: root.progress >= 1 ? (root.bar ? root.bar.urgent : Color.urgent)
-                                    : (root.bar ? root.bar.barForeground : Color.foreground)
-        }
+        visible: root.progress > 0
+        color: root.progress >= 1 ? (root.bar ? root.bar.urgent : Color.urgent)
+                                  : (root.bar ? root.bar.barForeground : Color.foreground)
       }
     }
 

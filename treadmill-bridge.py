@@ -55,9 +55,21 @@ RESULT_NAMES = {
 }
 
 
+LOG_PATH = STATE_DIR / "bridge.log"
+
+
 def emit(obj):
-    sys.stdout.write(json.dumps(obj, separators=(",", ":")) + "\n")
+    line = json.dumps(obj, separators=(",", ":"))
+    sys.stdout.write(line + "\n")
     sys.stdout.flush()
+    # Kopia do pliku: stdout mostu czyta shell, więc bez tego nie da się
+    # zajrzeć, co bieżnia mówi, gdy plugin działa.
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        with LOG_PATH.open("a") as fh:
+            fh.write(f"{datetime.now().isoformat(timespec='seconds')} {line}\n")
+    except OSError:
+        pass
 
 
 def status(state, **extra):
@@ -299,6 +311,10 @@ class Bridge:
         for _ in range(4):
             await asyncio.sleep(8.0)
             if not self.client or not self.client.is_connected:
+                return
+            # Taśma stanęła (bieżnia zatrzymuje się sama, gdy nikt na niej nie
+            # stoi) — dosyłanie celów do stojącej maszyny zwraca same błędy.
+            if self.latest.get("speed", 0) <= 0:
                 return
             speed_ok = (self.target_speed is None
                         or abs(self.latest.get("speed", 0) - self.target_speed) < 0.05)
