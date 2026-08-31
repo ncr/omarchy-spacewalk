@@ -108,3 +108,8 @@ i bierze ją, gdy się odezwie, ale jeśli przegapi to okno, trzeba pstryknąć 
 
 Telefon z appką Urevo wygrywa wyścig o połączenie — gdy się podłączy, bieżnia znika dla
 komputera. Na czas pracy z pluginem wyłącz Bluetooth w telefonie.
+
+## Apple Health
+
+Przejścia trafiają do Zdrowia na iPhonie przez Skróty — most wystawia je pod adresem
+z Tailscale. Instrukcja: [docs/apple-health.md](docs/apple-health.md).

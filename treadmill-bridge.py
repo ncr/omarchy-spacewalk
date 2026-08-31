@@ -21,6 +21,7 @@ import argparse
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import time
 from datetime import date, datetime
@@ -56,6 +57,12 @@ RESULT_NAMES = {
 
 
 LOG_PATH = STATE_DIR / "bridge.log"
+SESSIONS_PATH = STATE_DIR / "sessions.jsonl"
+
+# Po tylu sekundach bez ruchu uznajemy przejście za skończone. Bieżnia
+# zatrzymuje się sama, gdy nikt na niej nie stoi, więc krótka przerwa na
+# poprawienie czegoś przy biurku nie powinna dzielić marszu na dwie sesje.
+SESSION_IDLE_GAP = 90
 
 
 def emit(obj):
@@ -227,6 +234,143 @@ class DayTotals:
         }
 
 
+# --------------------------------------------------------- serwer dla telefonu
+
+def read_sessions() -> list[dict]:
+    try:
+        lines = SESSIONS_PATH.read_text().splitlines()
+    except FileNotFoundError:
+        return []
+    out = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return out
+
+
+def write_sessions(records: list[dict]):
+    tmp = SESSIONS_PATH.with_suffix(".jsonl.tmp")
+    tmp.write_text("".join(json.dumps(r) + "\n" for r in records))
+    tmp.replace(SESSIONS_PATH)
+
+
+def mark_sent(ids: list[str]) -> int:
+    records = read_sessions()
+    wanted = set(ids)
+    changed = 0
+    for r in records:
+        if r.get("id") in wanted and not r.get("sent"):
+            r["sent"] = True
+            changed += 1
+    if changed:
+        write_sessions(records)
+    return changed
+
+
+def tailscale_ip() -> str:
+    """Adres tego komputera w tailnecie. Bez niego serwer nie ma się na czym
+    postawić tak, żeby telefon go widział, a reszta sieci nie."""
+    try:
+        out = subprocess.run(["tailscale", "ip", "-4"], capture_output=True,
+                             text=True, timeout=5).stdout.strip().splitlines()
+        if out:
+            return out[0].strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    error("nie znalazłem adresu Tailscale — serwer stanie tylko na localhost")
+    return "127.0.0.1"
+
+
+class PhoneServer:
+    """Trzy adresy dla skrótu na iPhonie, po Tailscale:
+
+        GET  /pending   niewysłane przejścia
+        POST /ack       {"ids": [...]} — oznacz jako wysłane
+        GET  /today     sumy dnia (podgląd)
+
+    Słucha tylko na podanym adresie, domyślnie tym z Tailscale, więc nie
+    wystawia niczego do sieci lokalnej ani do internetu.
+    """
+
+    def __init__(self, host: str, port: int):
+        self.host = host
+        self.port = port
+        # Co wydało ostatnie /pending — żeby skrót mógł potwierdzić odbiór
+        # jednym wywołaniem, bez składania JSON-a z identyfikatorami.
+        self.last_served: list[str] = []
+
+    async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        try:
+            request_line = await asyncio.wait_for(reader.readline(), 5.0)
+            if not request_line:
+                return
+            parts = request_line.decode("latin-1").split()
+            if len(parts) < 2:
+                return
+            method, path = parts[0], parts[1]
+
+            length = 0
+            while True:
+                header = await asyncio.wait_for(reader.readline(), 5.0)
+                if header in (b"\r\n", b"\n", b""):
+                    break
+                name, _, value = header.decode("latin-1").partition(":")
+                if name.strip().lower() == "content-length":
+                    length = int(value.strip() or 0)
+            body = await reader.readexactly(length) if length else b""
+
+            status_code, payload = self.route(method, path, body)
+            data = json.dumps(payload).encode()
+            writer.write(
+                f"HTTP/1.1 {status_code}\r\n"
+                f"Content-Type: application/json\r\n"
+                f"Content-Length: {len(data)}\r\n"
+                "Connection: close\r\n\r\n".encode() + data
+            )
+            await writer.drain()
+        except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError, ValueError):
+            pass
+        finally:
+            writer.close()
+
+    def route(self, method: str, path: str, body: bytes):
+        path, _, query = path.partition("?")
+        if method == "GET" and path == "/pending":
+            pending = [r for r in read_sessions() if not r.get("sent")]
+            self.last_served = [r["id"] for r in pending]
+            return "200 OK", {"sessions": pending}
+        if method == "GET" and path == "/ack-all":
+            return "200 OK", {"marked": mark_sent(self.last_served)}
+        if method == "GET" and path == "/ack":
+            ids = [i for i in query.replace("ids=", "").split(",") if i]
+            return "200 OK", {"marked": mark_sent(ids)}
+        if method == "GET" and path == "/today":
+            day = DayTotals()
+            return "200 OK", day.snapshot()
+        if method == "POST" and path == "/ack":
+            try:
+                ids = json.loads(body or b"{}").get("ids") or []
+            except ValueError:
+                return "400 Bad Request", {"error": "zły JSON"}
+            return "200 OK", {"marked": mark_sent([str(i) for i in ids])}
+        return "404 Not Found", {"error": "nie ma takiego adresu"}
+
+    async def serve(self):
+        try:
+            server = await asyncio.start_server(self.handle, self.host, self.port)
+        except OSError as exc:
+            error(f"serwer dla telefonu nie wystartował na {self.host}:{self.port}: {exc}")
+            return
+        status("serving", address=f"{self.host}:{self.port}")
+        async with server:
+            await server.serve_forever()
+
+
 # ------------------------------------------------------------------ połączenie
 
 class Bridge:
@@ -242,10 +386,62 @@ class Bridge:
         self.connected = asyncio.Event()
         self.target_speed: float | None = None
         self.target_incline: float | None = None
+        self.session_started_at: datetime | None = None
+        self.session_last_move: float = 0.0
+        self.session_peak: dict = {}
+        self.server: PhoneServer | None = None
 
     @property
     def running_belt(self) -> bool:
         return self.latest.get("speed", 0) > 0
+
+    # ---- sesje (przejścia) do wysłania na telefon
+
+    def track_session(self, sample: dict):
+        """Otwiera przejście przy pierwszym ruchu i zamyka po SESSION_IDLE_GAP
+        sekund bezruchu. Liczniki bieżni są narastające od jej startu, więc
+        wartości szczytowe sesji to po prostu ostatnie niezerowe odczyty."""
+        now = time.monotonic()
+        moving = sample.get("speed", 0) > 0 or sample.get("steps", 0) > self.session_peak.get("steps", 0)
+
+        if moving:
+            if self.session_started_at is None:
+                self.session_started_at = datetime.now()
+                self.session_peak = {}
+            self.session_last_move = now
+            for field in ("steps", "distance_m", "kcal", "elapsed_s"):
+                value = sample.get(field)
+                if value is not None and value >= self.session_peak.get(field, 0):
+                    self.session_peak[field] = value
+        elif self.session_started_at is not None and now - self.session_last_move > SESSION_IDLE_GAP:
+            self.close_session()
+
+    def close_session(self):
+        if self.session_started_at is None:
+            return
+        peak = self.session_peak
+        started = self.session_started_at
+        self.session_started_at = None
+        self.session_peak = {}
+        if peak.get("steps", 0) <= 0:
+            return  # taśma kręciła się bez nikogo — nie ma czego zapisywać
+        record = {
+            "id": started.strftime("%Y%m%dT%H%M%S"),
+            "start": started.isoformat(timespec="seconds"),
+            "end": datetime.now().isoformat(timespec="seconds"),
+            "steps": int(peak.get("steps", 0)),
+            "distance_m": int(peak.get("distance_m", 0)),
+            "kcal": int(peak.get("kcal", 0)),
+            "elapsed_s": int(peak.get("elapsed_s", 0)),
+            "sent": False,
+        }
+        try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            with SESSIONS_PATH.open("a") as fh:
+                fh.write(json.dumps(record) + "\n")
+        except OSError as exc:
+            error(f"nie mogę zapisać sesji: {exc}")
+        emit({"t": "session", **record})
 
     def publish_targets(self):
         """Cele osobno od odczytów: gdy taśma stoi, bieżnia raportuje zera,
@@ -271,6 +467,7 @@ class Bridge:
             sample["steps"] = steps
         self.day.update(sample)
         self.latest = sample
+        self.track_session(sample)
         payload = {"t": "data"}
         payload.update({k: round(v, 2) if isinstance(v, float) else v
                         for k, v in sample.items() if v is not None})
@@ -473,6 +670,7 @@ class Bridge:
             await disconnected.wait()
 
         self.client = None
+        self.close_session()
         self.day.save()
         status("disconnected")
         return True
@@ -529,8 +727,10 @@ class Bridge:
         stdin_task = asyncio.create_task(self.stdin_loop())
         conn_task = asyncio.create_task(self.connection_loop())
         save_task = asyncio.create_task(self.save_loop())
-        done, pending = await asyncio.wait(
-            [stdin_task, conn_task, save_task], return_when=asyncio.FIRST_COMPLETED)
+        tasks = [stdin_task, conn_task, save_task]
+        if self.server is not None:
+            tasks.append(asyncio.create_task(self.server.serve()))
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
             task.cancel()
         self.day.save()
@@ -542,12 +742,17 @@ async def main():
     parser.add_argument("--steps-uuid", help="charakterystyka z krokami, jeśli inna niż FTMS")
     parser.add_argument("--stride", type=float, default=0.0,
                         help="długość kroku w metrach — kroki z dystansu, gdy bieżnia ich nie podaje")
+    parser.add_argument("--serve", metavar="HOST:PORT",
+                        help="wystaw sesje dla telefonu, np. 100.90.167.96:8787")
     parser.add_argument("--speed", type=float, default=None, help="prędkość zadawana po starcie")
     parser.add_argument("--incline", type=float, default=None, help="nachylenie zadawane po starcie")
     args = parser.parse_args()
     bridge = Bridge(args.address, args.steps_uuid, args.stride)
     bridge.target_speed = args.speed
     bridge.target_incline = args.incline
+    if args.serve:
+        host, _, port = args.serve.rpartition(":")
+        bridge.server = PhoneServer(host or tailscale_ip(), int(port))
     await bridge.run()
 
 

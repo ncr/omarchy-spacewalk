@@ -18,6 +18,8 @@ Item {
   property real startSpeed: 2.5
   property real startIncline: 3
   property real strideMeters: 0
+  // Port, na którym skrót z iPhone'a odbiera przejścia. 0 wyłącza serwer.
+  property int phonePort: 8787
 
   // Stan czytany przez widget i panel.
   // Nie „state": to wbudowana właściwość Item i własny mechanizm stanów Qt.
@@ -180,6 +182,9 @@ Item {
       if (root.address !== "") argv.push("--address", root.address)
       if (root.strideMeters > 0) argv.push("--stride", String(root.strideMeters))
       argv.push("--speed", String(root.startSpeed), "--incline", String(root.startIncline))
+      // Serwer dla skrótu na iPhonie. Podajemy sam port — most stawia się na
+      // adresie z Tailscale, więc nie widać go poza Twoimi urządzeniami.
+      if (root.phonePort > 0) argv.push("--serve", ":" + root.phonePort)
       return argv
     }
     stdout: SplitParser { onRead: function(line) { root.handleLine(line) } }
