@@ -243,6 +243,16 @@ class Bridge:
         self.target_speed: float | None = None
         self.target_incline: float | None = None
 
+    @property
+    def running_belt(self) -> bool:
+        return self.latest.get("speed", 0) > 0
+
+    def publish_targets(self):
+        """Cele osobno od odczytów: gdy taśma stoi, bieżnia raportuje zera,
+        a panel ma pokazywać to, co zostanie zadane po starcie."""
+        emit({"t": "targets", "target_speed": self.target_speed,
+              "target_incline": self.target_incline})
+
     # ---- odbiór
 
     def steps_from(self, sample: dict) -> float | None:
@@ -282,7 +292,9 @@ class Bridge:
 
     # ---- wysyłka
 
-    async def send_command(self, opcode: int, payload: bytes = b"", timeout: float = 5.0) -> bool:
+    # Bieżnia potwierdza start nawet po 7 s (sprawdzone w logu), więc krótszy
+    # limit robił z udanej komendy błąd.
+    async def send_command(self, opcode: int, payload: bytes = b"", timeout: float = 10.0) -> bool:
         if not self.client or not self.client.is_connected:
             error("bieżnia nie jest połączona")
             return False
@@ -356,10 +368,10 @@ class Bridge:
 
         if cmd == "start":
             self.day.new_session()
-            if not await self.send_command(OP_START):
-                return
-            # Bieżnia rozpędza się do 1 km/h i dopiero wtedy przyjmuje cele —
-            # komenda wysłana od razu po starcie przepada bez odpowiedzi.
+            # Brak potwierdzenia nie znaczy, że taśma nie ruszyła — bywa, że
+            # odpowiedź gubi się, a bieżnia startuje. Cele dosyłamy tak czy siak;
+            # apply_targets i tak przerwie, gdy taśma stoi.
+            await self.send_command(OP_START)
             if args:
                 self.target_speed = float(args[0])
             if len(args) > 1:
@@ -374,12 +386,18 @@ class Bridge:
         elif cmd == "speed" and args:
             kmh = max(0.0, float(args[0]))
             self.target_speed = kmh
-            await self.send_command(OP_SET_SPEED, round(kmh * 100).to_bytes(2, "little"))
+            self.publish_targets()
+            # Stojąca bieżnia nie przyjmuje ani prędkości, ani nachylenia —
+            # zapamiętujemy cel i dosyłamy go po starcie.
+            if self.running_belt:
+                await self.send_command(OP_SET_SPEED, round(kmh * 100).to_bytes(2, "little"))
         elif cmd == "incline" and args:
             percent = float(args[0])
             self.target_incline = percent
-            await self.send_command(OP_SET_INCLINATION,
-                                    round(percent * 10).to_bytes(2, "little", signed=True))
+            self.publish_targets()
+            if self.running_belt:
+                await self.send_command(OP_SET_INCLINATION,
+                                        round(percent * 10).to_bytes(2, "little", signed=True))
         else:
             error(f"nieznana komenda: {line.strip()}")
 
@@ -507,6 +525,7 @@ class Bridge:
 
     async def run(self):
         emit({"t": "data", **self.day.snapshot()})
+        self.publish_targets()
         stdin_task = asyncio.create_task(self.stdin_loop())
         conn_task = asyncio.create_task(self.connection_loop())
         save_task = asyncio.create_task(self.save_loop())
@@ -523,8 +542,12 @@ async def main():
     parser.add_argument("--steps-uuid", help="charakterystyka z krokami, jeśli inna niż FTMS")
     parser.add_argument("--stride", type=float, default=0.0,
                         help="długość kroku w metrach — kroki z dystansu, gdy bieżnia ich nie podaje")
+    parser.add_argument("--speed", type=float, default=None, help="prędkość zadawana po starcie")
+    parser.add_argument("--incline", type=float, default=None, help="nachylenie zadawane po starcie")
     args = parser.parse_args()
     bridge = Bridge(args.address, args.steps_uuid, args.stride)
+    bridge.target_speed = args.speed
+    bridge.target_incline = args.incline
     await bridge.run()
 
 

@@ -57,6 +57,15 @@ Sprawdzone odpowiedzi z `0x2ad9`: `80 00 01` (przejęcie sterowania), `80 07 01`
 rozpędza się najpierw do 1 km/h i dopiero wtedy przyjmuje cele. Most odczekuje 8 s
 i ponawia do czterech razy, aż odczyt zgodzi się z zadaną wartością.
 
+**Stojąca taśma nie przyjmuje żadnych komend prędkości ani nachylenia** — wszystkie osiem
+przypadków „brak odpowiedzi na 0x03" w logu to komendy wysłane przy zerowej prędkości.
+Most zapamiętuje je jako cel i dosyła po starcie.
+
+**Potwierdzenie startu potrafi przyjść po 7 sekundach.** Limit 5 s robił z udanej komendy
+błąd i przerywał dosyłanie celów; teraz limit to 10 s, a brak potwierdzenia i tak nie
+przerywa dosyłania — status maszyny (`0x2ada`) pokazuje `04`, gdy taśma rusza, `02 01`
+i `02 02` przy zatrzymaniu.
+
 ## Rozgłaszanie: bieżnia śpi
 
 Bieżnia rozgłasza się tylko przez krótką chwilę po włączeniu zasilania. Potem milknie

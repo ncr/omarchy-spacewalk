@@ -84,16 +84,22 @@ Panel {
       root.bar.centerHoverRevealSuppressed = value
   }
 
+  // Gdy taśma jedzie, pokazujemy jej odczyt; gdy stoi — to, co zostanie zadane
+  // po starcie. Stojąca bieżnia raportuje zera i nie przyjmuje komend, więc
+  // odczyt byłby mylący.
+  readonly property real shownSpeed: service ? (service.walking ? service.speed : service.targetSpeed) : 0
+  readonly property real shownIncline: service ? (service.walking ? service.incline : service.targetIncline) : 0
+
   function bumpSpeed(delta) {
     if (!service) return
-    var next = Math.max(0.5, Math.min(6.0, (service.speed > 0 ? service.speed : service.startSpeed) + delta))
-    service.setSpeed(next)
+    // Bieżnia obsługuje 1,0–6,0 km/h co 0,1 (jej własna deklaracja).
+    service.setSpeed(Math.max(1.0, Math.min(6.0, shownSpeed + delta)))
   }
 
   function bumpIncline(delta) {
     if (!service) return
-    var next = Math.max(0, Math.min(9, Math.round(service.incline + delta)))
-    service.setIncline(next)
+    // Nachylenie 0–9 co 1.
+    service.setIncline(Math.max(0, Math.min(9, Math.round(shownIncline + delta))))
   }
 
   KeyboardPanel {
@@ -219,7 +225,7 @@ Panel {
             iconText: "−"
             tooltipText: "wolniej o 0,5 km/h"
             foreground: root.fg
-            enabled: root.service && root.service.connected
+            enabled: root.service !== null
             onClicked: root.bumpSpeed(-0.5)
           }
 
@@ -227,14 +233,14 @@ Panel {
             spacing: Style.space(2)
             Text {
               anchors.horizontalCenter: parent.horizontalCenter
-              text: (root.service ? root.service.speed.toFixed(1).replace(".", ",") : "0,0") + " km/h"
+              text: root.shownSpeed.toFixed(1).replace(".", ",") + " km/h"
               color: root.fg
               font.family: root.family
               font.pixelSize: Style.font.title
             }
             Text {
               anchors.horizontalCenter: parent.horizontalCenter
-              text: "prędkość"
+              text: root.service && root.service.walking ? "prędkość" : "prędkość po starcie"
               color: root.fg
               opacity: 0.55
               font.family: root.family
@@ -246,7 +252,7 @@ Panel {
             iconText: "+"
             tooltipText: "szybciej o 0,5 km/h"
             foreground: root.fg
-            enabled: root.service && root.service.connected
+            enabled: root.service !== null
             onClicked: root.bumpSpeed(0.5)
           }
         }
@@ -260,7 +266,7 @@ Panel {
             iconText: "−"
             tooltipText: "nachylenie w dół"
             foreground: root.fg
-            enabled: root.service && root.service.connected
+            enabled: root.service !== null
             onClicked: root.bumpIncline(-1)
           }
 
@@ -268,14 +274,14 @@ Panel {
             spacing: Style.space(2)
             Text {
               anchors.horizontalCenter: parent.horizontalCenter
-              text: root.service ? String(Math.round(root.service.incline)) : "0"
+              text: String(Math.round(root.shownIncline))
               color: root.fg
               font.family: root.family
               font.pixelSize: Style.font.title
             }
             Text {
               anchors.horizontalCenter: parent.horizontalCenter
-              text: "nachylenie"
+              text: root.service && root.service.walking ? "nachylenie" : "nachylenie po starcie"
               color: root.fg
               opacity: 0.55
               font.family: root.family
@@ -287,7 +293,7 @@ Panel {
             iconText: "+"
             tooltipText: "nachylenie w górę"
             foreground: root.fg
-            enabled: root.service && root.service.connected
+            enabled: root.service !== null
             onClicked: root.bumpIncline(1)
           }
         }

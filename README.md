@@ -68,6 +68,10 @@ działa, ale start trwa kilkanaście sekund dłużej.
 - klik środkowym w pigułkę — start albo stop
 - w panelu: strzałki przy prędkości (co 0,5 km/h) i nachyleniu (co 1), Start / Pauza / Zatrzymaj
 
+Przy stojącej taśmie panel pokazuje wartości **po starcie** — bieżnia raportuje wtedy zera
+i nie przyjmuje komend, więc zmiana strzałkami zapamiętuje cel, a most zadaje go, gdy taśma
+się rozpędzi.
+
 ## Gdy przestaje się łączyć
 
 SpaceWalk 3S bywa kapryśny przy wznawianiu połączenia. Most próbuje sam co 5 s, po

@@ -25,6 +25,10 @@ Item {
   property bool connected: linkState === "connected"
   property real speed: 0
   property real incline: 0
+  // Co zostanie zadane po starcie. Stojąca bieżnia raportuje zera, więc bez
+  // tego panel nie miałby czego pokazać.
+  property real targetSpeed: 2.5
+  property real targetIncline: 3
   property int daySteps: 0
   property int daySteps0: 0              // kroki dnia w chwili startu sesji — do tempa
   property int dayDistanceM: 0
@@ -82,8 +86,15 @@ Item {
 
   function stop() { send("stop") }
   function pause() { send("pause") }
-  function setSpeed(kmh) { send("speed " + Number(kmh).toFixed(1)) }
-  function setIncline(percent) { send("incline " + Math.round(percent)) }
+  function setSpeed(kmh) {
+    targetSpeed = kmh          // natychmiast w panelu, nawet gdy taśma stoi
+    send("speed " + Number(kmh).toFixed(1))
+  }
+
+  function setIncline(percent) {
+    targetIncline = Math.round(percent)
+    send("incline " + Math.round(percent))
+  }
 
   function restart() {
     bridge.running = false
@@ -106,6 +117,9 @@ Item {
       if (msg.state !== "connected") walking = false
     } else if (msg.t === "error") {
       lastError = msg.msg || ""
+    } else if (msg.t === "targets") {
+      if (msg.target_speed !== null && msg.target_speed !== undefined) targetSpeed = msg.target_speed
+      if (msg.target_incline !== null && msg.target_incline !== undefined) targetIncline = msg.target_incline
     } else if (msg.t === "data") {
       applyData(msg)
     }
@@ -145,7 +159,8 @@ Item {
     function dump(): string {
       return JSON.stringify({
         linkState: root.linkState, linesSeen: root.linesSeen, speed: root.speed,
-        incline: root.incline, walking: root.walking, daySteps: root.daySteps,
+        incline: root.incline, targetSpeed: root.targetSpeed, targetIncline: root.targetIncline,
+        walking: root.walking, daySteps: root.daySteps,
         dayKcal: root.dayKcal, dayElapsedS: root.dayElapsedS,
         dayDistanceM: root.dayDistanceM, lastError: root.lastError
       })
@@ -164,6 +179,7 @@ Item {
       var argv = ["uv", "run", "--script", root.scriptPath]
       if (root.address !== "") argv.push("--address", root.address)
       if (root.strideMeters > 0) argv.push("--stride", String(root.strideMeters))
+      argv.push("--speed", String(root.startSpeed), "--incline", String(root.startIncline))
       return argv
     }
     stdout: SplitParser { onRead: function(line) { root.handleLine(line) } }
