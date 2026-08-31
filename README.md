@@ -25,6 +25,19 @@ omarchy-shell shell rescanPlugins
 omarchy plugin enable ncr.treadmill
 ```
 
+Po każdej zmianie w plikach pluginu: **`omarchy-restart-shell`**. Samo zapisanie pliku
+przeładowuje most, ale nie kod widgetu ani panelu — zmiany w QML wchodzą dopiero po
+restarcie shella. (`omarchy-refresh-shell` to co innego: przywraca domyślny pasek
+i kasuje układ widgetów — nie używać.)
+
+Podgląd stanu z terminala:
+
+```bash
+omarchy-shell treadmill dump      # stan połączenia i liczniki dnia
+omarchy-shell treadmill start     # to samo co Start w panelu
+omarchy-shell treadmill stop
+```
+
 ## Znalezienie bieżni
 
 Bieżnia musi być pod prądem, a **appka Urevo w telefonie zamknięta** — przyjmuje jedno
@@ -74,9 +87,20 @@ uv run --script ~/.config/omarchy/plugins/ncr.treadmill/treadmill-bridge.py --ad
 Komendy wpisuje się do jego stdin: `start`, `stop`, `pause`, `speed 2.5`, `incline 3`,
 `reset-day`, `ping`.
 
-## Znane ograniczenie
+## Kroki
 
-Standardowy pakiet danych bieżni FTMS nie zawiera pola „kroki". Jeśli bieżnia wystawia je
-własną charakterystyką, znajdzie ją `probe.py` i wskazuje się ją mostowi przez
-`--steps-uuid`. Bez tego kroki liczą się z dystansu (`strideMeters`), co znaczy, że
-zejście z taśmy przy kręcącym się pasie nadal dolicza kroki.
+Standardowy pakiet FTMS nie ma pola „kroki", ale SpaceWalk 3S dopisuje własny licznik
+w wolnym miejscu pakietu — szczegóły w [docs/gatt-dump.md](docs/gatt-dump.md). Plugin czyta
+go wprost, więc kroki są te same, które pokazuje appka producenta, razem z jej wykrywaniem
+zejścia z taśmy.
+
+Ustawienie `strideMeters` > 0 przełącza na liczenie z dystansu — zapas na wypadek innej
+bieżni, przy tej niepotrzebny.
+
+## Bieżnia zasypia
+
+Bieżnia rozgłasza się tylko przez chwilę po włączeniu zasilania. Most skanuje bez przerwy
+i bierze ją, gdy się odezwie, ale jeśli przegapi to okno, trzeba pstryknąć wyłącznikiem.
+
+Telefon z appką Urevo wygrywa wyścig o połączenie — gdy się podłączy, bieżnia znika dla
+komputera. Na czas pracy z pluginem wyłącz Bluetooth w telefonie.

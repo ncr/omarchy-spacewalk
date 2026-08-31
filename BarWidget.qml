@@ -60,54 +60,51 @@ BarWidget {
   Item {
     id: pill
     anchors.fill: parent
-    implicitWidth: content.width + Style.space(17)
+    implicitWidth: pillRow.implicitWidth + Style.space(17)
     implicitHeight: parent ? parent.height : Style.space(24)
 
-    Column {
-      id: content
+    // Rząd jest wyśrodkowany sam, a pasek postępu wisi pod nim na kotwicy do
+    // dołu. Wspólna kolumna centrowałaby rząd RAZEM z paskiem, przez co tekst
+    // i ikona siedziały wyżej niż środek baru — i skakały, gdy pasek się
+    // pojawiał albo znikał.
+    Row {
+      id: pillRow
       anchors.centerIn: parent
-      spacing: Style.space(2)
-      // Szerokość bierze się z rzędu, nie z kotwic dzieci: element wyśrodkowany
-      // kotwicą nie daje kolumnie rozmiaru, więc widget wychodził zerowej
-      // szerokości i znikał z baru.
-      width: pillRow.implicitWidth
+      spacing: Style.space(6)
+      height: Math.max(icon.implicitHeight, stepsText.implicitHeight)
 
-      Row {
-        id: pillRow
-        spacing: Style.space(6)
-        height: Math.max(icon.implicitHeight, stepsText.implicitHeight)
-
-        Text {
-          id: icon
-          anchors.verticalCenter: parent.verticalCenter
-          text: root.service && root.service.walking ? "󰗇" : "󰖃"
-          color: root.bar ? root.bar.barForeground : Color.foreground
-          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-          font.pixelSize: Style.font.body + 2
-          opacity: root.service && root.service.connected ? 1.0 : 0.45
-        }
-
-        Text {
-          id: stepsText
-          anchors.verticalCenter: parent.verticalCenter
-          text: Model.formatSteps(root.steps)
-          color: root.bar ? root.bar.barForeground : Color.foreground
-          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-          font.pixelSize: Style.font.body
-        }
+      Text {
+        id: icon
+        anchors.verticalCenter: parent.verticalCenter
+        text: root.service && root.service.walking ? "󰗇" : "󰖃"
+        color: root.bar ? root.bar.barForeground : Color.foreground
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.body + 2
+        opacity: root.service && root.service.connected ? 1.0 : 0.45
       }
 
-      // Postęp do celu: sama wypełniona część, bez szarej ścieżki pod spodem —
-      // pusta ścieżka na całej szerokości czytała się jak podkreślenie pigułki.
-      Rectangle {
-        anchors.horizontalCenter: parent.horizontalCenter
-        width: content.width * root.progress
-        height: Style.space(2)
-        radius: height / 2
-        visible: root.progress > 0
-        color: root.progress >= 1 ? (root.bar ? root.bar.urgent : Color.urgent)
-                                  : (root.bar ? root.bar.barForeground : Color.foreground)
+      Text {
+        id: stepsText
+        anchors.verticalCenter: parent.verticalCenter
+        text: Model.formatSteps(root.steps)
+        color: root.bar ? root.bar.barForeground : Color.foreground
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.body
       }
+    }
+
+    // Postęp do celu: sama wypełniona część, bez szarej ścieżki pod spodem —
+    // pusta ścieżka na całej szerokości czytała się jak podkreślenie pigułki.
+    Rectangle {
+      anchors.horizontalCenter: pillRow.horizontalCenter
+      anchors.top: pillRow.bottom
+      anchors.topMargin: Style.space(2)
+      width: pillRow.width * root.progress
+      height: Style.space(2)
+      radius: height / 2
+      visible: root.progress > 0
+      color: root.progress >= 1 ? (root.bar ? root.bar.urgent : Color.urgent)
+                                : (root.bar ? root.bar.barForeground : Color.foreground)
     }
 
     MouseArea {
