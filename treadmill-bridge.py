@@ -337,7 +337,10 @@ class PhoneServer:
                     length = int(value.strip() or 0)
             body = await reader.readexactly(length) if length else b""
 
+            peer = writer.get_extra_info("peername")
             status_code, payload = self.route(method, path, body)
+            emit({"t": "request", "method": method, "path": path,
+                  "from": peer[0] if peer else "?", "status": status_code})
             data = json.dumps(payload).encode()
             writer.write(
                 f"HTTP/1.1 {status_code}\r\n"
@@ -356,6 +359,13 @@ class PhoneServer:
         if method == "GET" and path == "/pending":
             pending = [r for r in read_sessions() if not r.get("sent")]
             self.last_served = [r["id"] for r in pending]
+            # Skróty na iPhonie nie zamieniają "2026-08-31T12:47:32" na datę
+            # same z siebie; ze spacją zamiast T akcja „Uzyskaj datę z tekstu"
+            # radzi sobie bez ustawiania formatu.
+            for r in pending:
+                r["end_text"] = r.get("end", "").replace("T", " ")
+                r["start_text"] = r.get("start", "").replace("T", " ")
+                r["distance_km"] = round(r.get("distance_m", 0) / 1000, 3)
             return "200 OK", {"sessions": pending}
         if method == "GET" and path == "/ack-all":
             return "200 OK", {"marked": mark_sent(self.last_served)}

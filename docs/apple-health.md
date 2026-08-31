@@ -37,17 +37,38 @@ Nazwa `spawner` poniżej to nazwa komputera w tailnecie (MagicDNS). Gdyby nie dz
 wpisz adres: `http://100.90.167.96:8787`.
 
 1. **Pobierz zawartość URL** — `http://spawner:8787/pending`
-2. **Pobierz wartość słownika** — klucz `sessions`, ze Zawartości URL
-3. **Powtórz dla każdego** — z wyniku kroku 2, a w środku:
-   - **Pobierz wartość słownika** `steps` → **Zapisz próbkę zdrowia**: typ *Kroki*,
-     wartość ta liczba, data = wartość klucza `end`
-   - **Pobierz wartość słownika** `distance_m` → **Zapisz próbkę zdrowia**:
-     typ *Dystans marszu i biegu*, jednostka metry
-   - **Pobierz wartość słownika** `kcal` → **Zapisz próbkę zdrowia**:
-     typ *Aktywna energia*, jednostka kcal
+2. **Pobierz wartość dla** `sessions` **w** Zawartość URL
+3. **Powtórz dla każdej rzeczy w** Wartość ze słownika, a w środku:
+   - **Pobierz wartość dla** `end_text` **w** Powtarzana rzecz
+   - **Uzyskaj daty z wejścia** ← ta akcja zamienia tekst na datę. Bez niej
+     „Zarejestruj próbkę zdrowia" dostaje napis zamiast daty i skrót staje.
+   - **Pobierz wartość dla** `steps` **w** Powtarzana rzecz
+   - **Zarejestruj próbkę zdrowia**: typ *Kroki*, wartość ← ta liczba,
+     data ← Daty (wynik kroku z datą)
+   - **Pobierz wartość dla** `distance_m` → **Zarejestruj próbkę zdrowia**:
+     typ *Dystans marszu i biegu*, jednostka *metry*
+   - **Pobierz wartość dla** `kcal` → **Zarejestruj próbkę zdrowia**:
+     typ *Aktywna energia*, jednostka *kcal*
 4. Po pętli: **Pobierz zawartość URL** — `http://spawner:8787/ack-all`
 
-Typu w akcji „Zapisz próbkę zdrowia" nie da się podać zmienną — stąd trzy osobne akcje.
+Typu w akcji „Zarejestruj próbkę zdrowia" nie da się podać zmienną — stąd trzy osobne
+akcje. Za pierwszym uruchomieniem iOS zapyta o zgodę na zapis do Zdrowia; bez niej akcja
+kończy się błędem.
+
+Każda sesja ma gotowe pola pod Skróty: `end_text` i `start_text` (data ze spacją zamiast
+`T`, bo ISO z `T` bywa nieparsowane) oraz `distance_km`, gdyby wygodniej było w kilometrach.
+
+## Gdy skrót nie działa
+
+Sprawdź, czy telefon w ogóle doszedł do komputera — most zapisuje każde żądanie:
+
+```bash
+grep '"t":"request"' ~/.local/state/omarchy-treadmill/bridge.log | tail
+```
+
+Wpis z adresem telefonu i `200 OK` przy `/pending` znaczy, że sieć i serwer działają,
+a problem jest w samym skrócie. Brak wpisu po `/ack-all` znaczy, że skrót zatrzymał się
+w pętli, zanim potwierdził odbiór — najczęściej na dacie albo na braku zgody dla Zdrowia.
 
 ## Kiedy to uruchamiać
 
