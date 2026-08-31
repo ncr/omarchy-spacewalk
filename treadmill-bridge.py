@@ -343,11 +343,12 @@ class Bridge:
                 return address
         return None
 
-    async def session(self):
+    async def session(self) -> bool:
+        """Zwraca False, gdy bieżni nie ma w eterze — wtedy warto odczekać dłużej."""
         address = self.address or await self.find_address()
         if not address:
             status("not_found")
-            return
+            return False
         status("connecting", address=address)
         disconnected = asyncio.Event()
 
@@ -377,6 +378,7 @@ class Bridge:
         self.client = None
         self.day.save()
         status("disconnected")
+        return True
 
     def on_steps_char(self, _sender, data: bytearray):
         """Kroki z własnej charakterystyki producenta — układ ustala probe.py."""
@@ -385,13 +387,24 @@ class Bridge:
     async def connection_loop(self):
         attempt = 0
         while True:
+            found = False
             try:
-                await self.session()
-                attempt = 0
+                found = await self.session()
+                if found:
+                    attempt = 0
             except (BleakError, asyncio.TimeoutError, OSError) as exc:
                 error(f"połączenie nieudane: {exc}")
+            if not found:
                 attempt += 1
-            delay = 5.0 if attempt < 10 else 30.0
+            # Bieżnia wyłączona to stan normalny, nie awaria: po kilku pustych
+            # próbach schodzimy do jednego skanu na minutę, żeby nie zajmować
+            # Bluetootha innym urządzeniom.
+            if attempt == 0:
+                delay = 5.0
+            elif attempt < 5:
+                delay = 10.0
+            else:
+                delay = 60.0
             await asyncio.sleep(delay)
 
     async def stdin_loop(self):
