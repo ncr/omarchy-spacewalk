@@ -205,8 +205,16 @@ class DayTotals:
         self.load()
 
     def update(self, sample: dict):
-        """Przyjmuje wartości narastające od początku sesji i dolicza różnicę."""
+        """Przyjmuje wartości narastające od początku sesji i dolicza różnicę.
+
+        Dystans, kalorie i czas doliczają się tylko wtedy, gdy w tym samym
+        odczycie przybyło kroków. Bieżnia liczy dystans od ruchu pasa, a kroki
+        od człowieka — bez tego warunku pusta, kręcąca się taśma dopisywała do
+        dnia metry i kalorie, których nikt nie przeszedł (150 m zamiast 30).
+        """
         self.roll_over_if_needed()
+
+        deltas = {}
         for f in self.FIELDS:
             if f not in sample or sample[f] is None:
                 continue
@@ -215,8 +223,13 @@ class DayTotals:
             if value < previous:
                 # Bieżnia wyzerowała licznik — nowa sesja zaczyna się od zera.
                 previous = 0.0
-            delta = value - previous
+            deltas[f] = value - previous
             self.session[f] = value
+
+        if deltas.get("steps", 0) <= 0:
+            return
+
+        for f, delta in deltas.items():
             if delta > 0:
                 self.totals[f] += delta
                 self.dirty = True
@@ -366,7 +379,9 @@ class PhoneServer:
         except OSError as exc:
             error(f"serwer dla telefonu nie wystartował na {self.host}:{self.port}: {exc}")
             return
-        status("serving", address=f"{self.host}:{self.port}")
+        # Własny typ, nie status: „status" opisuje połączenie z bieżnią i panel
+        # bierze go wprost jako stan łącza.
+        emit({"t": "server", "address": f"{self.host}:{self.port}"})
         async with server:
             await server.serve_forever()
 
