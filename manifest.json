@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "ncr.treadmill",
+  "name": "Treadmill",
+  "version": "0.1.0",
+  "author": "Jacek Becela",
+  "description": "Kroki, kalorie, czas i dystans z bieżni Urevo SpaceWalk 3S, plus sterowanie prędkością i nachyleniem",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Treadmill",
+    "description": "Kroki dnia z paskiem postępu do celu",
+    "category": "Health",
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "address": "",
+      "dailyGoal": 10000,
+      "startSpeed": 2.5,
+      "startIncline": 3,
+      "strideMeters": 0
+    },
+    "schema": [
+      { "key": "address", "type": "string", "label": "Adres bieżni (puste = szukaj po FTMS)" },
+      { "key": "dailyGoal", "type": "number", "label": "Cel dzienny (kroki)" },
+      { "key": "startSpeed", "type": "number", "label": "Prędkość startowa (km/h)" },
+      { "key": "startIncline", "type": "number", "label": "Nachylenie startowe" },
+      { "key": "strideMeters", "type": "number", "label": "Długość kroku w metrach (0 = kroki z bieżni)" }
+    ]
+  }
+}
