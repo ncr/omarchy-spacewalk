@@ -121,6 +121,11 @@ def parse_treadmill_data(data: bytes) -> dict:
             out["elapsed_s"] = take(2)
         if flags & 0x0800:
             out["remaining_s"] = take(2)
+        # Bit 13 nie istnieje w specyfikacji FTMS — Urevo dopisał w tym miejscu
+        # licznik kroków (uint24). Sprawdzone na URTM024: 179 kroków na 100 m
+        # marszu, podczas gdy czas w tym samym pakiecie rósł równo 1/s.
+        if flags & 0x2000:
+            out["steps"] = take(3)
     except ValueError as exc:
         error(f"{exc}: flagi 0x{flags:04x}, dane {data.hex(' ')}")
 
@@ -223,6 +228,8 @@ class Bridge:
         self.control_replies: asyncio.Queue = asyncio.Queue()
         self.has_control = False
         self.connected = asyncio.Event()
+        self.target_speed: float | None = None
+        self.target_incline: float | None = None
 
     # ---- odbiór
 
@@ -287,6 +294,25 @@ class Bridge:
             return False
         return True
 
+    async def apply_targets(self):
+        """Dosyła prędkość i nachylenie po starcie, aż bieżnia je pokaże."""
+        for _ in range(4):
+            await asyncio.sleep(8.0)
+            if not self.client or not self.client.is_connected:
+                return
+            speed_ok = (self.target_speed is None
+                        or abs(self.latest.get("speed", 0) - self.target_speed) < 0.05)
+            incline_ok = (self.target_incline is None
+                          or abs(self.latest.get("incline", 0) - self.target_incline) < 0.05)
+            if speed_ok and incline_ok:
+                return
+            if not speed_ok:
+                await self.send_command(OP_SET_SPEED,
+                                        round(self.target_speed * 100).to_bytes(2, "little"))
+            if not incline_ok:
+                await self.send_command(OP_SET_INCLINATION,
+                                        round(self.target_incline * 10).to_bytes(2, "little", signed=True))
+
     async def request_control(self) -> bool:
         if self.has_control:
             return True
@@ -314,7 +340,15 @@ class Bridge:
 
         if cmd == "start":
             self.day.new_session()
-            await self.send_command(OP_START)
+            if not await self.send_command(OP_START):
+                return
+            # Bieżnia rozpędza się do 1 km/h i dopiero wtedy przyjmuje cele —
+            # komenda wysłana od razu po starcie przepada bez odpowiedzi.
+            if args:
+                self.target_speed = float(args[0])
+            if len(args) > 1:
+                self.target_incline = float(args[1])
+            asyncio.create_task(self.apply_targets())
         elif cmd == "stop":
             if await self.send_command(OP_STOP, bytes([0x01])):
                 self.day.save()
@@ -323,9 +357,11 @@ class Bridge:
                 self.day.save()
         elif cmd == "speed" and args:
             kmh = max(0.0, float(args[0]))
+            self.target_speed = kmh
             await self.send_command(OP_SET_SPEED, round(kmh * 100).to_bytes(2, "little"))
         elif cmd == "incline" and args:
             percent = float(args[0])
+            self.target_incline = percent
             await self.send_command(OP_SET_INCLINATION,
                                     round(percent * 10).to_bytes(2, "little", signed=True))
         else:
@@ -333,29 +369,56 @@ class Bridge:
 
     # ---- pętla
 
-    async def find_address(self) -> str | None:
+    async def find_device(self, patience: float = 60.0):
+        """Ciągły skan zamiast pojedynczego zapytania. Bieżnia rozgłasza się tylko
+        przez chwilę po włączeniu zasilania, więc trzeba nasłuchiwać bez przerwy
+        i wziąć ją w momencie, gdy się odezwie. BlueZ zapomina ją po rozłączeniu,
+        więc łączenie po samym adresie kończy się „device not found"."""
         status("scanning")
-        devices = await BleakScanner.discover(timeout=12.0, return_adv=True)
-        for address, (device, adv) in devices.items():
-            uuids = [u.lower() for u in (adv.service_uuids or [])]
-            if FTMS_SERVICE in uuids:
-                status("found", device=adv.local_name or device.name or address, address=address)
-                return address
-        return None
+        found = asyncio.Event()
+        hit = {}
+        want = (self.address or "").upper()
+
+        def on_detect(device, adv):
+            if want:
+                if device.address.upper() != want:
+                    return
+            else:
+                uuids = [u.lower() for u in (adv.service_uuids or [])]
+                if FTMS_SERVICE not in uuids:
+                    return
+            hit["device"] = device
+            hit["name"] = adv.local_name or device.name or device.address
+            found.set()
+
+        scanner = BleakScanner(detection_callback=on_detect)
+        await scanner.start()
+        try:
+            await asyncio.wait_for(found.wait(), patience)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            await scanner.stop()
+
+        device = hit.get("device")
+        if device is not None:
+            status("found", device=hit.get("name", ""), address=device.address)
+        return device
 
     async def session(self) -> bool:
         """Zwraca False, gdy bieżni nie ma w eterze — wtedy warto odczekać dłużej."""
-        address = self.address or await self.find_address()
-        if not address:
+        device = await self.find_device()
+        if device is None:
             status("not_found")
             return False
+        address = device.address
         status("connecting", address=address)
         disconnected = asyncio.Event()
 
         def on_disconnect(_client):
             disconnected.set()
 
-        async with BleakClient(address, timeout=30.0, disconnected_callback=on_disconnect) as client:
+        async with BleakClient(device, timeout=30.0, disconnected_callback=on_disconnect) as client:
             self.client = client
             self.has_control = False
             self.day.new_session()

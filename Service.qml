@@ -72,10 +72,10 @@ Item {
     bridge.write(command + "\n")
   }
 
+  // Most sam dosyła prędkość i nachylenie kilkanaście sekund po starcie —
+  // bieżnia ignoruje cele zadane, zanim rozpędzi się do 1 km/h.
   function start() {
-    send("start")
-    // Bieżnia po starcie stoi na własnych wartościach — dosyłamy Twoje domyślne.
-    setSpeedTimer.restart()
+    send("start " + Number(startSpeed).toFixed(1) + " " + Math.round(startIncline))
   }
 
   function stop() { send("stop") }
@@ -86,15 +86,6 @@ Item {
   function restart() {
     bridge.running = false
     bridge.running = true
-  }
-
-  Timer {
-    id: setSpeedTimer
-    interval: 1200
-    onTriggered: {
-      root.setSpeed(root.startSpeed)
-      root.setIncline(root.startIncline)
-    }
   }
 
   function handleLine(line) {
