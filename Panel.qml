@@ -162,13 +162,9 @@ Panel {
     }
   }
 
-  // Napis na głównym przycisku: pauza to zejście z taśmy, więc wraca się do niej
-  // wznowieniem, nie startem od nowa.
-  readonly property string mainButtonLabel: {
-    if (!service) return "Start"
-    if (service.walking) return "Zatrzymaj"
-    return service.paused ? "Wznów" : "Start"
-  }
+  // Tylko Start i Zatrzymaj. Bieżnia sama wstrzymuje taśmę, gdy z niej zejdziesz,
+  // a Start ją wtedy wznawia — osobny przycisk pauzy niczego nie dokładał.
+  readonly property string mainButtonLabel: service && service.walking ? "Zatrzymaj" : "Start"
 
   function open() {
     openedFromHotkey = false
@@ -571,10 +567,8 @@ Panel {
             text: root.mainButtonLabel
             enabled: root.service && root.service.connected
             tooltipText: root.service && root.service.walking
-                         ? "kończy sesję — bieżnia zeruje swoje liczniki"
-                         : (root.service && root.service.paused
-                            ? "wraca do przerwanej sesji, licznik bieżni idzie dalej"
-                            : "rusza z ustawioną prędkością i nachyleniem")
+                         ? "zatrzymuje taśmę; licznik dnia zostaje"
+                         : "rusza z ustawioną prędkością i nachyleniem"
             foreground: root.fg
             fontFamily: root.family
             bordered: true
@@ -584,19 +578,8 @@ Panel {
             onClicked: {
               if (!root.service) return
               if (root.service.walking) root.service.stop()
-              else root.service.start()   // start i wznowienie to ta sama komenda
+              else root.service.start()   // start wznawia też taśmę wstrzymaną
             }
-          }
-
-          Button {
-            text: "Pauza"
-            enabled: root.service && root.service.walking
-            tooltipText: "taśma staje, licznik bieżni zostaje — Wznów idzie dalej"
-            foreground: root.fg
-            fontFamily: root.family
-            bordered: true
-            horizontalPadding: Style.spacing.controlPaddingX + Style.space(6)
-            onClicked: if (root.service) root.service.pause()
           }
         }
 

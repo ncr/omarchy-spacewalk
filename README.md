@@ -66,13 +66,15 @@ działa, ale start trwa kilkanaście sekund dłużej.
 
 - klik w pigułkę — panel
 - klik środkowym w pigułkę — start albo stop
-- w panelu: strzałki przy prędkości (co 0,5 km/h) i nachyleniu (co 1), Start / Pauza / Zatrzymaj
+- w panelu: strzałki przy prędkości (co 0,5 km/h) i nachyleniu (co 1), Start / Zatrzymaj
 
-**Pauza kontra Zatrzymaj** (sprawdzone na licznikach bieżni): pauza wstrzymuje sesję —
-kroki i czas w bieżni zostają, a Wznów idzie dalej od nich. Zatrzymaj kończy sesję i bieżnia
-zeruje swoje liczniki, więc następny Start zaczyna od zera. Tę samą pauzę bieżnia wysyła sama,
-gdy zejdziesz z taśmy. Na sumę dnia to nie wpływa: most sumuje przyrosty i rozpoznaje
-wyzerowanie licznika.
+Licznik dnia zeruje **tylko północ**. Bieżnia kasuje swoje liczniki po zatrzymaniu, a gdy
+zejdziesz z taśmy, sama ją wstrzymuje — ani jedno, ani drugie nie rusza sumy dnia, bo most
+sumuje przyrosty i rozpoznaje wyzerowanie licznika. Start wznawia wstrzymaną taśmę tak samo,
+jak startuje nową sesję, więc osobny przycisk pauzy zniknął.
+
+Komenda `pause` została w moście (`omarchy-shell spacewalk` i stdin), po prostu nie ma
+dla niej przycisku.
 
 Przy stojącej taśmie panel pokazuje wartości **po starcie** — bieżnia raportuje wtedy zera
 i nie przyjmuje komend, więc zmiana strzałkami zapamiętuje cel, a most zadaje go, gdy taśma
