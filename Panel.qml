@@ -550,7 +550,9 @@ Panel {
               { kind: "speed", label: "speed",
                 value: root.shownSpeed.toFixed(1) + " km/h" },
               { kind: "incline", label: "incline",
-                value: String(Math.round(root.shownIncline)) }
+                // Bieżnia podaje nachylenie w procentach (0–9%), więc znak
+                // procenta należy do wartości, nie do etykiety.
+                value: String(Math.round(root.shownIncline)) + "%" }
             ]
 
             Rectangle {

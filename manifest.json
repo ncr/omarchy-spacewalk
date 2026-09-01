@@ -46,7 +46,7 @@
       {
         "key": "startIncline",
         "type": "number",
-        "label": "Incline on start"
+        "label": "Incline on start (%)"
       },
       {
         "key": "strideMeters",
