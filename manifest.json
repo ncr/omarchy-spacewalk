@@ -4,7 +4,7 @@
   "name": "Treadmill",
   "version": "0.1.0",
   "author": "Jacek Becela",
-  "description": "Kroki, kalorie, czas i dystans z bieżni Urevo SpaceWalk 3S, plus sterowanie prędkością i nachyleniem",
+  "description": "Kroki, kalorie, czas i dystans z bie\u017cni Urevo SpaceWalk 3S, plus sterowanie pr\u0119dko\u015bci\u0105 i nachyleniem",
   "kinds": [
     "service",
     "bar-widget"
@@ -16,10 +16,10 @@
   },
   "barWidget": {
     "displayName": "Treadmill",
-    "description": "Kroki dnia z paskiem postępu do celu",
+    "description": "Kroki dnia z paskiem post\u0119pu do celu",
     "category": "Health",
     "allowMultiple": false,
-    "defaultSection": "center",
+    "defaultSection": "right",
     "defaults": {
       "address": "",
       "dailyGoal": 10000,
@@ -28,11 +28,31 @@
       "strideMeters": 0
     },
     "schema": [
-      { "key": "address", "type": "string", "label": "Adres bieżni (puste = szukaj po FTMS)" },
-      { "key": "dailyGoal", "type": "number", "label": "Cel dzienny (kroki)" },
-      { "key": "startSpeed", "type": "number", "label": "Prędkość startowa (km/h)" },
-      { "key": "startIncline", "type": "number", "label": "Nachylenie startowe" },
-      { "key": "strideMeters", "type": "number", "label": "Długość kroku w metrach (0 = kroki z bieżni)" }
+      {
+        "key": "address",
+        "type": "string",
+        "label": "Adres bie\u017cni (puste = szukaj po FTMS)"
+      },
+      {
+        "key": "dailyGoal",
+        "type": "number",
+        "label": "Cel dzienny (kroki)"
+      },
+      {
+        "key": "startSpeed",
+        "type": "number",
+        "label": "Pr\u0119dko\u015b\u0107 startowa (km/h)"
+      },
+      {
+        "key": "startIncline",
+        "type": "number",
+        "label": "Nachylenie startowe"
+      },
+      {
+        "key": "strideMeters",
+        "type": "number",
+        "label": "D\u0142ugo\u015b\u0107 kroku w metrach (0 = kroki z bie\u017cni)"
+      }
     ]
   }
 }

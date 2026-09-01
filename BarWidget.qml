@@ -3,13 +3,8 @@ import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 
-// Pigułka na barze: chodzik i kroki dnia w jednym napisie, pod nim cienki pasek
-// postępu do celu. Klik otwiera panel; klik środkowym startuje albo zatrzymuje
-// taśmę.
-//
-// Napis idzie przez WidgetButton — ten sam komponent, na którym stoją zegar
-// i układ klawiatury. Własne liczenie wysokości stawiało pigułkę wyżej niż
-// sąsiadów, bo bar układa sloty inaczej, niż wynikałoby z samego barSize.
+// Pigułka na barze: cienki pasek postępu do celu, a pod nim chodzik i kroki
+// dnia. Klik otwiera panel; klik środkowym startuje albo zatrzymuje taśmę.
 BarWidget {
   id: root
   moduleName: "ncr.treadmill"
@@ -103,21 +98,22 @@ BarWidget {
       anchors.rightMargin: Style.space(6)
       text: root.glyph
       color: number.color
+      // Ten sam rozmiar co cyfry: chodzik ma mieścić się w wysokości czcionki,
+      // a nie wystawać ponad wiersz.
       font.family: number.font.family
-      font.pixelSize: Style.font.body + 2
+      font.pixelSize: Style.font.body
       renderType: Text.NativeRendering
       opacity: number.opacity
     }
 
-    // Postęp do celu, pod liczbą. Ścieżka bierze kolor stąd, co ścieżki suwaków
-    // w panelach Omarchy, więc chodzi za motywem zamiast być na sztywno czarna.
+    // Postęp do celu, nad chodzikiem i liczbą, na szerokość obu. Ścieżka bierze
+    // kolor stąd, co ścieżki suwaków w panelach Omarchy, więc chodzi za motywem
+    // zamiast być na sztywno czarna.
     Rectangle {
-      anchors.horizontalCenter: number.horizontalCenter
-      // Do dołu pigułki, nie pod sam tekst: pod tekstem wychodził poza widget
-      // i bar go ucinał.
-      anchors.bottom: parent.bottom
-      anchors.bottomMargin: Style.space(4)
-      width: Math.round(number.implicitWidth)
+      anchors.horizontalCenter: parent.horizontalCenter
+      anchors.top: parent.top
+      anchors.topMargin: Style.space(2)
+      width: Math.round(icon.implicitWidth + Style.space(6) + number.implicitWidth)
       height: Style.space(2)
       radius: height / 2
       color: root.bar ? Style.selectedFillFor(root.bar.barForeground, Color.accent)
