@@ -28,7 +28,7 @@ curl http://$(tailscale ip -4):8787/pending
 Przejście zamyka się po 90 sekundach bez ruchu albo przy rozłączeniu z bieżnią.
 Przejścia bez ani jednego kroku (taśma kręciła się bez nikogo) nie są zapisywane.
 
-Wszystko leży w `~/.local/state/omarchy-treadmill/sessions.jsonl`, po jednej linii na
+Wszystko leży w `~/.local/state/omarchy-spacewalk/sessions.jsonl`, po jednej linii na
 przejście, z flagą `sent`.
 
 ## Skrót na iPhonie
@@ -77,7 +77,7 @@ Każda sesja ma gotowe pola pod Skróty: `end_text` i `start_text` (data ze spac
 Sprawdź, czy telefon w ogóle doszedł do komputera — most zapisuje każde żądanie:
 
 ```bash
-grep '"t":"request"' ~/.local/state/omarchy-treadmill/bridge.log | tail
+grep '"t":"request"' ~/.local/state/omarchy-spacewalk/bridge.log | tail
 ```
 
 Wpis z adresem telefonu i `200 OK` przy `/pending` znaczy, że sieć i serwer działają,

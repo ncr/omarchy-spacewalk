@@ -1,4 +1,4 @@
-# ncr.treadmill
+# io.github.ncr.spacewalk
 
 Plugin do `omarchy-shell` zastępujący appkę Urevo przy bieżni **Urevo SpaceWalk 3S**.
 Na barze pokazuje kroki dnia z paskiem postępu do celu; panel dokłada kalorie, czas,
@@ -8,13 +8,13 @@ dystans, godzinę osiągnięcia celu oraz sterowanie prędkością, nachyleniem 
 
 Dwie części gadają ze sobą przez strumień JSON, po jednej linii na aktualizację:
 
-- `treadmill-bridge.py` — trzyma połączenie Bluetooth z bieżnią (standard FTMS, serwis
+- `spacewalk-bridge.py` — trzyma połączenie Bluetooth z bieżnią (standard FTMS, serwis
   `0x1826`), pisze stan na stdout, czyta komendy ze stdin. Uruchamiany przez `uv`, więc
   `bleak` nie musi być instalowany w systemie.
 - `Service.qml` / `BarWidget.qml` / `Panel.qml` — plugin shella. Serwis startuje razem
   z sesją i liczy kroki cały dzień, także z zamkniętym panelem.
 
-Suma dnia leży w `~/.local/state/omarchy-treadmill/RRRR-MM-DD.json`. Bieżnia zeruje
+Suma dnia leży w `~/.local/state/omarchy-spacewalk/RRRR-MM-DD.json`. Bieżnia zeruje
 własne liczniki przy każdym starcie, więc most dodaje przyrosty do sumy dnia — kilka
 sesji dziennie sumuje się w jedną liczbę.
 
@@ -22,7 +22,7 @@ sesji dziennie sumuje się w jedną liczbę.
 
 ```bash
 omarchy-shell shell rescanPlugins
-omarchy plugin enable ncr.treadmill
+omarchy plugin enable io.github.ncr.spacewalk
 ```
 
 Po każdej zmianie w plikach pluginu: **`omarchy-restart-shell`**. Samo zapisanie pliku
@@ -33,9 +33,9 @@ i kasuje układ widgetów — nie używać.)
 Podgląd stanu z terminala:
 
 ```bash
-omarchy-shell treadmill dump      # stan połączenia i liczniki dnia
-omarchy-shell treadmill start     # to samo co Start w panelu
-omarchy-shell treadmill stop
+omarchy-shell spacewalk dump      # stan połączenia i liczniki dnia
+omarchy-shell spacewalk start     # to samo co Start w panelu
+omarchy-shell spacewalk stop
 ```
 
 ## Znalezienie bieżni
@@ -49,7 +49,7 @@ połączenie naraz.
 ```
 
 Adres wpisz w ustawieniach widgetu (Setup > Plugins) albo wprost do `~/.config/omarchy/shell.json`
-przy wpisie `ncr.treadmill`. Puste pole znaczy „szukaj po FTMS przy każdym połączeniu" —
+przy wpisie `io.github.ncr.spacewalk`. Puste pole znaczy „szukaj po FTMS przy każdym połączeniu" —
 działa, ale start trwa kilkanaście sekund dłużej.
 
 ## Ustawienia
@@ -79,13 +79,13 @@ dziesięciu próbach co 30 s. Gdy to nie pomaga:
 
 ```bash
 bluetoothctl disconnect <adres>
-pkill -f treadmill-bridge.py        # serwis podniesie most po ~10 s
+pkill -f spacewalk-bridge.py        # serwis podniesie most po ~10 s
 ```
 
 Most można też uruchomić ręcznie i patrzeć, co pisze:
 
 ```bash
-uv run --script ~/.config/omarchy/plugins/ncr.treadmill/treadmill-bridge.py --address <adres>
+uv run --script ~/.config/omarchy/plugins/io.github.ncr.spacewalk/spacewalk-bridge.py --address <adres>
 ```
 
 Komendy wpisuje się do jego stdin: `start`, `stop`, `pause`, `speed 2.5`, `incline 3`,

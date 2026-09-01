@@ -35,7 +35,7 @@ TREADMILL_DATA = "00002acd-0000-1000-8000-00805f9b34fb"
 CONTROL_POINT = "00002ad9-0000-1000-8000-00805f9b34fb"
 MACHINE_STATUS = "00002ada-0000-1000-8000-00805f9b34fb"
 
-STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "omarchy-treadmill"
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "omarchy-spacewalk"
 
 # Kody operacji punktu sterowania (FTMS 4.16.1)
 OP_REQUEST_CONTROL = 0x00

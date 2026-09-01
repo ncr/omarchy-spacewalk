@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "ncr.treadmill",
-  "name": "Treadmill",
+  "id": "io.github.ncr.spacewalk",
+  "name": "Spacewalk",
   "version": "0.1.0",
   "author": "Jacek Becela",
   "description": "Kroki, kalorie, czas i dystans z bie\u017cni Urevo SpaceWalk 3S, plus sterowanie pr\u0119dko\u015bci\u0105 i nachyleniem",
@@ -15,7 +15,7 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "Treadmill",
+    "displayName": "Spacewalk",
     "description": "Kroki dnia z paskiem post\u0119pu do celu",
     "category": "Health",
     "allowMultiple": false,

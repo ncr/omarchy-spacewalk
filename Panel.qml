@@ -7,8 +7,8 @@ import "Model.js" as Model
 
 Panel {
   id: root
-  moduleName: "ncr.treadmill"
-  ipcTarget: "ncr.treadmill"
+  moduleName: "io.github.ncr.spacewalk"
+  ipcTarget: "io.github.ncr.spacewalk"
   manageIpc: false
 
   property var anchorItem: null

@@ -7,9 +7,9 @@ import "Model.js" as Model
 // dnia. Klik otwiera panel; klik środkowym startuje albo zatrzymuje taśmę.
 BarWidget {
   id: root
-  moduleName: "ncr.treadmill"
+  moduleName: "io.github.ncr.spacewalk"
 
-  readonly property var service: bar && bar.shell ? bar.shell.serviceFor("ncr.treadmill") : null
+  readonly property var service: bar && bar.shell ? bar.shell.serviceFor("io.github.ncr.spacewalk") : null
   readonly property int goal: service ? service.dailyGoal : 10000
   readonly property int steps: service ? service.daySteps : 0
   readonly property real progress: Model.progress(steps, goal)

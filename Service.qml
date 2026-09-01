@@ -4,7 +4,7 @@ import Quickshell.Io
 
 // Trzyma most do bieżni przy życiu przez całą sesję, niezależnie od tego, czy
 // panel jest otwarty. Shell montuje ten plik przy starcie (shell.qml:_syncServices)
-// i wystawia go widgetowi przez shell.serviceFor("ncr.treadmill").
+// i wystawia go widgetowi przez shell.serviceFor("io.github.ncr.spacewalk").
 Item {
   id: root
 
@@ -67,7 +67,7 @@ Item {
 
   readonly property string scriptPath: {
     var dir = String(Qt.resolvedUrl("."))
-    return dir.replace(/^file:\/\//, "") + "treadmill-bridge.py"
+    return dir.replace(/^file:\/\//, "") + "spacewalk-bridge.py"
   }
 
   function applySettings(settings) {
@@ -197,11 +197,11 @@ Item {
   // (a w praktyce wszystkie) linie przepadają.
   Component.onCompleted: bridge.running = true
 
-  // Podgląd stanu z terminala: `omarchy-shell treadmill state`.
+  // Podgląd stanu z terminala: `omarchy-shell spacewalk state`.
   // console.log z pluginu użytkownika nie trafia do dziennika systemowego,
   // więc to jedyny sposób, żeby zajrzeć serwisowi do środka na żywo.
   IpcHandler {
-    target: "treadmill"
+    target: "spacewalk"
 
     function dump(): string {
       return JSON.stringify({
