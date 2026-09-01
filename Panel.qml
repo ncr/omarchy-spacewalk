@@ -311,6 +311,8 @@ Panel {
                 opacity: 0.55
                 font.family: root.family
                 font.pixelSize: Style.font.caption
+                font.capitalization: Font.AllUppercase
+                font.letterSpacing: 0.4
               }
             }
           }
@@ -433,85 +435,74 @@ Panel {
 
         PanelSeparator { width: parent.width }
 
-        // ---- prędkość
+        // ---- sterowanie: dwa kafelki, strzałki przy wartości
         Row {
           anchors.horizontalCenter: parent.horizontalCenter
-          spacing: Style.space(12)
+          spacing: Style.space(10)
 
-          PanelActionButton {
-            iconText: "−"
-            tooltipText: "wolniej o 0,5 km/h"
-            foreground: root.fg
-            enabled: root.service !== null
-            onClicked: root.bumpSpeed(-0.5)
-          }
+          Repeater {
+            model: [
+              { kind: "speed", label: root.service && root.service.walking ? "prędkość" : "prędkość po starcie",
+                value: root.shownSpeed.toFixed(1).replace(".", ",") + " km/h" },
+              { kind: "incline", label: root.service && root.service.walking ? "nachylenie" : "nachylenie po starcie",
+                value: String(Math.round(root.shownIncline)) }
+            ]
 
-          Column {
-            spacing: Style.space(2)
-            Text {
-              anchors.horizontalCenter: parent.horizontalCenter
-              text: root.shownSpeed.toFixed(1).replace(".", ",") + " km/h"
-              color: root.fg
-              font.family: root.family
-              font.pixelSize: Style.font.title
+            Rectangle {
+              required property var modelData
+              width: Math.round((column.width - Style.space(42)) / 2)
+              height: tileRow.implicitHeight + Style.space(10)
+              radius: Style.space(8)
+              color: Util.alpha(root.fg, 0.07)
+
+              Row {
+                id: tileRow
+                anchors.centerIn: parent
+                spacing: Style.space(4)
+
+                PanelActionButton {
+                  anchors.verticalCenter: parent.verticalCenter
+                  iconText: "−"
+                  tooltipText: modelData.kind === "speed" ? "wolniej o 0,5 km/h" : "nachylenie w dół"
+                  foreground: root.fg
+                  enabled: root.service !== null
+                  onClicked: modelData.kind === "speed" ? root.bumpSpeed(-0.5) : root.bumpIncline(-1)
+                }
+
+                Column {
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(1)
+
+                  Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: modelData.value
+                    color: root.fg
+                    font.family: root.family
+                    font.pixelSize: Style.font.subtitle
+                  }
+
+                  Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: modelData.label
+                    color: root.fg
+                    opacity: 0.5
+                    font.family: root.family
+                    font.pixelSize: Style.font.caption
+                    font.capitalization: Font.AllUppercase
+                    font.letterSpacing: 0.4
+                  }
+                }
+
+                PanelActionButton {
+                  anchors.verticalCenter: parent.verticalCenter
+                  iconText: "+"
+                  tooltipText: modelData.kind === "speed" ? "szybciej o 0,5 km/h" : "nachylenie w górę"
+                  foreground: root.fg
+                  enabled: root.service !== null
+                  onClicked: modelData.kind === "speed" ? root.bumpSpeed(0.5) : root.bumpIncline(1)
+                }
+              }
             }
-            Text {
-              anchors.horizontalCenter: parent.horizontalCenter
-              text: root.service && root.service.walking ? "prędkość" : "prędkość po starcie"
-              color: root.fg
-              opacity: 0.55
-              font.family: root.family
-              font.pixelSize: Style.font.caption
-            }
-          }
-
-          PanelActionButton {
-            iconText: "+"
-            tooltipText: "szybciej o 0,5 km/h"
-            foreground: root.fg
-            enabled: root.service !== null
-            onClicked: root.bumpSpeed(0.5)
-          }
-        }
-
-        // ---- nachylenie
-        Row {
-          anchors.horizontalCenter: parent.horizontalCenter
-          spacing: Style.space(12)
-
-          PanelActionButton {
-            iconText: "−"
-            tooltipText: "nachylenie w dół"
-            foreground: root.fg
-            enabled: root.service !== null
-            onClicked: root.bumpIncline(-1)
-          }
-
-          Column {
-            spacing: Style.space(2)
-            Text {
-              anchors.horizontalCenter: parent.horizontalCenter
-              text: String(Math.round(root.shownIncline))
-              color: root.fg
-              font.family: root.family
-              font.pixelSize: Style.font.title
-            }
-            Text {
-              anchors.horizontalCenter: parent.horizontalCenter
-              text: root.service && root.service.walking ? "nachylenie" : "nachylenie po starcie"
-              color: root.fg
-              opacity: 0.55
-              font.family: root.family
-              font.pixelSize: Style.font.caption
-            }
-          }
-
-          PanelActionButton {
-            iconText: "+"
-            tooltipText: "nachylenie w górę"
-            foreground: root.fg
-            enabled: root.service !== null
-            onClicked: root.bumpIncline(1)
           }
         }
 
@@ -523,6 +514,12 @@ Panel {
           Button {
             text: root.mainButtonLabel
             enabled: root.service && root.service.connected
+            foreground: root.fg
+            fontFamily: root.family
+            bordered: true
+            // Wyróżniony wypełnieniem — to on jest tym, po co się tu przychodzi.
+            selected: true
+            horizontalPadding: Style.spacing.controlPaddingX + Style.space(6)
             onClicked: {
               if (!root.service) return
               if (root.service.walking) root.service.stop()
@@ -533,6 +530,10 @@ Panel {
           Button {
             text: "Pauza"
             enabled: root.service && root.service.walking
+            foreground: root.fg
+            fontFamily: root.family
+            bordered: true
+            horizontalPadding: Style.spacing.controlPaddingX + Style.space(6)
             onClicked: if (root.service) root.service.pause()
           }
         }
