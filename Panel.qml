@@ -390,6 +390,14 @@ Panel {
           Grid {
             id: dayGrid
             anchors.horizontalCenter: parent.horizontalCenter
+
+            // Strażnik całego obszaru kratek: gdy kursor go opuszcza, wracamy
+            // do dzisiaj. Samo „wyszedłem z kratki" nie wystarcza — przy szybkim
+            // ruchu zdarzenie potrafi nie dojść i zostaje ostatni podglądany dzień.
+            HoverHandler {
+              id: gridHover
+              onHoveredChanged: if (!hovered) root.hoveredDay = null
+            }
             rows: 7
             columns: root.gridWeeks
             flow: Grid.TopToBottom
