@@ -609,28 +609,6 @@ Panel {
           }
         }
 
-        // ---- co się właśnie dzieje ze startem
-        //
-        // Zawsze zajmuje swój wiersz, choćby pusty, i nigdy się nie zawija:
-        // pojawianie się tej linijki i przeskakiwanie jej na dwie linie
-        // zmieniało wysokość panelu, a panel wisi pod paskiem i rośnie w dół,
-        // więc cała zawartość podskakiwała.
-        Text {
-          anchors.horizontalCenter: parent.horizontalCenter
-          opacity: text === "" ? 0 : 0.8
-          text: root.service ? root.service.phaseText : ""
-          color: root.service && root.service.phaseName === "failed"
-                 ? (root.bar ? root.bar.urgent : Color.urgent) : root.fg
-          font.family: root.family
-          font.pixelSize: Style.font.bodySmall
-          width: parent.width - Style.space(32)
-          height: Math.round(Style.font.bodySmall * 1.6)
-          horizontalAlignment: Text.AlignHCenter
-          verticalAlignment: Text.AlignVCenter
-          wrapMode: Text.NoWrap
-          elide: Text.ElideRight
-        }
-
       }
     }
   }
