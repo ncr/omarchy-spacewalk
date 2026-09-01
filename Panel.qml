@@ -298,7 +298,7 @@ Panel {
           PanelHero {
             id: hero
             width: parent.width
-            title: "SpaceWalk"
+            title: "Spacewalk 3S"
             meta: root.heroMeta
             foreground: root.fg
             fontFamily: root.family
