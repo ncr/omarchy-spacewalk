@@ -110,13 +110,14 @@ Panel {
     ? Model.gridDays(service.history, new Date(), gridWeeks) : []
   readonly property bool hasHistory: service && service.history
     ? Object.keys(service.history).length > 0 : false
-  readonly property var walkedAverage: service ? Model.averageWalkedSteps(service.history)
-                                              : ({ steps: 0, days: 0 })
+  readonly property var dayAverage: service ? Model.averageSteps(service.history)
+                                            : ({ steps: 0, days: 0 })
 
   property var hoveredDay: null
-  readonly property string hoveredLabel: hoveredDay
-    ? Model.formatDay(hoveredDay.date)
-    : (hasHistory ? "średnio " + Model.formatSteps(walkedAverage.steps) : "")
+  // Tylko dzień pod kursorem. Średnia stoi pod kratką i powtarzanie jej tutaj
+  // pokazywało tę samą liczbę dwa razy. Wiersz nagłówka bierze wysokość z
+  // napisu po lewej, więc pusty podpis niczego nie zwija.
+  readonly property string hoveredLabel: hoveredDay ? Model.formatDay(hoveredDay.date) : ""
 
   // Kolory kratki z motywu: cztery stopnie wypełnienia liczone od koloru tekstu,
   // a dzień z osiągniętym celem dostaje akcent, żeby odcinał się od reszty.
@@ -314,10 +315,16 @@ Panel {
         }
 
         // ---- kalorie, czas, dystans
+        // Trzy równe kolumny zamiast wiersza dopasowanego do treści: inaczej
+        // każda zmiana liczby cyfr przesuwa wszystkie trzy w bok.
         Row {
-          anchors.horizontalCenter: parent.horizontalCenter
+          id: statsRow
+          width: parent.width
           spacing: Style.space(28)
           height: Math.round(Style.font.subtitle * 1.5 + Style.font.caption * 1.7)
+
+          readonly property real cellWidth:
+            Math.max(0, (width - spacing * 2) / 3)
 
           Repeater {
             model: [
@@ -327,16 +334,21 @@ Panel {
             ]
             Column {
               required property var modelData
+              width: statsRow.cellWidth
               spacing: Style.space(2)
               Text {
-                anchors.horizontalCenter: parent.horizontalCenter
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
                 text: modelData.value
                 color: root.fg
                 font.family: root.family
                 font.pixelSize: Style.font.subtitle
               }
               Text {
-                anchors.horizontalCenter: parent.horizontalCenter
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
                 text: modelData.label
                 color: root.fg
                 opacity: 0.55
@@ -429,7 +441,7 @@ Panel {
             }
           }
 
-          // passa, rekord, średnia — trzy liczby, które mówią, co z tej kratki wynika
+          // Średnia dzienna z całego okresu — jedna liczba, która podsumowuje kratkę.
           Text {
             width: parent.width
             height: Math.round(Style.font.bodySmall * 1.6)
@@ -437,9 +449,7 @@ Panel {
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
             visible: root.hasHistory
-            text: Model.formatSteps(root.walkedAverage.steps) + " — średnia z "
-                  + root.walkedAverage.days
-                  + (root.walkedAverage.days === 1 ? " dnia marszu" : " dni marszu")
+            text: Model.formatSteps(root.dayAverage.steps) + " — średnia dzienna"
             color: root.fg
             opacity: 0.55
             font.family: root.family
