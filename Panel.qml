@@ -479,7 +479,7 @@ Panel {
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
             visible: root.hasHistory
-            text: Model.formatSteps(root.dayAverage.steps) + " — średnia z dni marszu"
+            text: "Robisz średnio " + Model.formatSteps(root.dayAverage.steps) + " kroków dziennie"
             color: root.fg
             opacity: 0.55
             font.family: root.family
