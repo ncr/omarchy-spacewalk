@@ -252,7 +252,9 @@ Panel {
           // drgał — a zmienia się tu co kratkę.
           Text {
             width: parent.width
+            height: Math.round(52 * 1.25)
             horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
             text: Model.formatSteps(root.steps)
             color: root.fg
             font.family: root.family
@@ -262,7 +264,9 @@ Panel {
 
           Text {
             width: parent.width
+            height: Math.round(Style.font.body * 1.6)
             horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
             text: root.showingToday
                   ? "kroków z " + Model.formatSteps(root.goal)
@@ -302,7 +306,9 @@ Panel {
 
           Text {
             width: parent.width
+            height: Math.round(Style.font.bodySmall * 1.6)
             horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
             text: root.caption
             color: root.fg
@@ -316,6 +322,7 @@ Panel {
         Row {
           anchors.horizontalCenter: parent.horizontalCenter
           spacing: Style.space(28)
+          height: Math.round(Style.font.subtitle * 1.5 + Style.font.caption * 1.7)
 
           Repeater {
             model: [
@@ -423,6 +430,7 @@ Panel {
           Row {
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: Style.space(24)
+            height: Math.round(Style.font.bodySmall * 1.5 + Style.font.caption * 1.7)
             visible: root.hasHistory
 
             Repeater {
@@ -599,7 +607,9 @@ Panel {
           font.family: root.family
           font.pixelSize: Style.font.bodySmall
           width: parent.width - Style.space(32)
+          height: Math.round(Style.font.bodySmall * 1.6)
           horizontalAlignment: Text.AlignHCenter
+          verticalAlignment: Text.AlignVCenter
           wrapMode: Text.NoWrap
           elide: Text.ElideRight
         }
@@ -615,7 +625,9 @@ Panel {
           font.family: root.family
           font.pixelSize: Style.font.caption
           width: parent.width - Style.space(32)
+          height: Math.round(Style.font.caption * 1.7)
           horizontalAlignment: Text.AlignHCenter
+          verticalAlignment: Text.AlignVCenter
           wrapMode: Text.NoWrap
           elide: Text.ElideRight
         }
