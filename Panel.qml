@@ -523,6 +523,11 @@ Panel {
           Button {
             text: root.mainButtonLabel
             enabled: root.service && root.service.connected
+            tooltipText: root.service && root.service.walking
+                         ? "kończy sesję — bieżnia zeruje swoje liczniki"
+                         : (root.service && root.service.paused
+                            ? "wraca do przerwanej sesji, licznik bieżni idzie dalej"
+                            : "rusza z ustawioną prędkością i nachyleniem")
             foreground: root.fg
             fontFamily: root.family
             bordered: true
@@ -539,6 +544,7 @@ Panel {
           Button {
             text: "Pauza"
             enabled: root.service && root.service.walking
+            tooltipText: "taśma staje, licznik bieżni zostaje — Wznów idzie dalej"
             foreground: root.fg
             fontFamily: root.family
             bordered: true
