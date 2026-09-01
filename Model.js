@@ -140,41 +140,14 @@ function gridDays(history, todayDate, weeks) {
   return out
 }
 
-// Dni z rzędu z osiągniętym celem, licząc wstecz. Dzisiejszy dzień wchodzi do
-// passy dopiero po osiągnięciu celu, ale jego brak jej nie zrywa — dzień trwa.
-function streak(history, goal, todayDate) {
-  var count = 0
-  var cursor = new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate())
-  var first = true
-  while (true) {
-    var rec = history ? history[dayKey(cursor)] : null
-    var steps = rec ? rec.steps : 0
-    if (steps >= goal) count++
-    else if (!first) break
-    first = false
-    cursor = new Date(cursor.getTime() - 86400000)
-    if (count > 400) break
+// Średnia z dni, w które faktycznie chodziłeś. Dni bez marszu zaniżałyby ją
+// tak, że przestałaby cokolwiek mówić o samym chodzeniu.
+function averageWalkedSteps(history) {
+  var sum = 0, days = 0
+  for (var k in history) {
+    if (history[k].steps > 0) { sum += history[k].steps; days++ }
   }
-  return count
-}
-
-function bestDay(history) {
-  var best = 0
-  for (var k in history) if (history[k].steps > best) best = history[k].steps
-  return best
-}
-
-// Średnia z ostatnich `days` dni, licząc też dni bez ruchu — inaczej wychodzi
-// średnia z dni, w których i tak się chodziło.
-function averageSteps(history, todayDate, days) {
-  var sum = 0
-  var cursor = new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate())
-  for (var i = 0; i < days; i++) {
-    var rec = history ? history[dayKey(cursor)] : null
-    sum += rec ? rec.steps : 0
-    cursor = new Date(cursor.getTime() - 86400000)
-  }
-  return Math.round(sum / days)
+  return days > 0 ? { steps: Math.round(sum / days), days: days } : { steps: 0, days: 0 }
 }
 
 function daysWithGoal(history, goal) {

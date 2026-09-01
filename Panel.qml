@@ -110,14 +110,13 @@ Panel {
     ? Model.gridDays(service.history, new Date(), gridWeeks) : []
   readonly property bool hasHistory: service && service.history
     ? Object.keys(service.history).length > 0 : false
-  readonly property int streakDays: service ? Model.streak(service.history, goal, new Date()) : 0
-  readonly property int bestSteps: service ? Model.bestDay(service.history) : 0
-  readonly property int avgSteps: service ? Model.averageSteps(service.history, new Date(), 30) : 0
+  readonly property var walkedAverage: service ? Model.averageWalkedSteps(service.history)
+                                              : ({ steps: 0, days: 0 })
 
   property var hoveredDay: null
   readonly property string hoveredLabel: hoveredDay
     ? Model.formatDay(hoveredDay.date)
-    : (hasHistory ? "średnio " + Model.formatSteps(avgSteps) : "")
+    : (hasHistory ? "średnio " + Model.formatSteps(walkedAverage.steps) : "")
 
   // Kolory kratki z motywu: cztery stopnie wypełnienia liczone od koloru tekstu,
   // a dzień z osiągniętym celem dostaje akcent, żeby odcinał się od reszty.
@@ -439,9 +438,9 @@ Panel {
 
             Repeater {
               model: [
-                { label: "passa", value: root.streakDays + (root.streakDays === 1 ? " dzień" : " dni") },
-                { label: "najlepszy", value: Model.formatSteps(root.bestSteps) },
-                { label: "średnia 30 dni", value: Model.formatSteps(root.avgSteps) }
+                { label: "średnia z " + root.walkedAverage.days
+                         + (root.walkedAverage.days === 1 ? " dnia marszu" : " dni marszu"),
+                  value: Model.formatSteps(root.walkedAverage.steps) }
               ]
               Column {
                 required property var modelData
