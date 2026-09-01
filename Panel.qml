@@ -298,40 +298,20 @@ Panel {
         }
 
         // ---- kroki: główna liczba
-        Column {
+        //
+        // Pełna szerokość i środkowanie w niej: przy zwykłym centrowaniu napis
+        // zmieniał szerokość razem z liczbą i przy przesuwaniu kursora po
+        // kratkach drgał — a zmienia się tu co kratkę.
+        Text {
           width: parent.width
-          spacing: Style.space(2)
-
-          // Oba napisy dostają całą szerokość panelu i środkują się w niej same.
-          // Przy zwykłym centrowaniu każdy z nich zmieniał szerokość razem
-          // z treścią, więc przy przesuwaniu kursora po kratkach cały blok
-          // drgał — a zmienia się tu co kratkę.
-          Text {
-            width: parent.width
-            height: Math.round(52 * 1.25)
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-            text: Model.formatSteps(root.steps)
-            color: root.fg
-            font.family: root.family
-            font.pixelSize: 52
-            font.bold: true
-          }
-
-          Text {
-            width: parent.width
-            height: Math.round(Style.font.body * 1.6)
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideRight
-            text: root.showingToday
-                  ? "kroków z " + Model.formatSteps(root.goal)
-                  : "kroków — " + Model.formatDay(Model.parseKey(root.selectedDay))
-            color: root.fg
-            opacity: 0.6
-            font.family: root.family
-            font.pixelSize: Style.font.body
-          }
+          height: Math.round(52 * 1.25)
+          horizontalAlignment: Text.AlignHCenter
+          verticalAlignment: Text.AlignVCenter
+          text: Model.formatSteps(root.steps)
+          color: root.fg
+          font.family: root.family
+          font.pixelSize: 52
+          font.bold: true
         }
 
         // ---- pasek postępu + kiedy koniec
@@ -429,29 +409,19 @@ Panel {
           width: parent.width
           spacing: Style.space(6)
 
-          Item {
-            width: parent.width - Style.space(32)
-            x: Style.space(16)
-            height: gridHead.implicitHeight
-
-            Text {
-              id: gridHead
-              anchors.left: parent.left
-              text: "ostatnie 13 tygodni"
-              color: root.fg
-              opacity: 0.55
-              font.family: root.family
-              font.pixelSize: Style.font.caption
-            }
-
-            Text {
-              anchors.right: parent.right
-              text: root.hoveredLabel
-              color: root.fg
-              opacity: 0.75
-              font.family: root.family
-              font.pixelSize: Style.font.caption
-            }
+          // Nad kratką tylko data dnia pod kursorem, wyśrodkowana. Wiersz trzyma
+          // swoją wysokość także pusty, żeby kratka nie skakała.
+          Text {
+            width: parent.width
+            height: Math.round(Style.font.caption * 1.7)
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+            text: root.hoveredLabel
+            color: root.fg
+            opacity: 0.75
+            font.family: root.family
+            font.pixelSize: Style.font.caption
           }
 
           Grid {
