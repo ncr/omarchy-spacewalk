@@ -59,7 +59,7 @@ Panel {
   // kliknięciu w kratkę skracało panel i wszystko pod spodem podskakiwało.
   readonly property string caption: showingToday
     ? Model.goalCaption(steps, goal, stepsPerMinute, clockNow)
-    : Model.formatDay(Model.parseKey(selectedDay)) + " · " + Model.pastDayCaption(steps, goal)
+    : Model.pastDayCaption(steps, goal)
 
   // Kłopoty opisujemy rzeczowo; dopiero gdy wszystko gra, w tej linii chodzi
   // karuzela (wzorem omaphones).
@@ -249,6 +249,32 @@ Panel {
         topPadding: Style.space(16)
         bottomPadding: Style.space(16)
 
+        // ---- kroki: główna liczba
+        Column {
+          width: parent.width
+          spacing: Style.space(2)
+
+          Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: Model.formatSteps(root.steps)
+            color: root.fg
+            font.family: root.family
+            font.pixelSize: 52
+            font.bold: true
+          }
+
+          Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: root.showingToday
+                  ? "kroków z " + Model.formatSteps(root.goal)
+                  : "kroków — " + Model.formatDay(Model.parseKey(root.selectedDay))
+            color: root.fg
+            opacity: 0.6
+            font.family: root.family
+            font.pixelSize: Style.font.body
+          }
+        }
+
         // ---- pasek postępu + kiedy koniec
         Column {
           width: parent.width
@@ -285,11 +311,10 @@ Panel {
         // ---- kalorie, czas, dystans
         Row {
           anchors.horizontalCenter: parent.horizontalCenter
-          spacing: Style.space(18)
+          spacing: Style.space(28)
 
           Repeater {
             model: [
-              { label: "kroki", value: Model.formatSteps(root.steps) },
               { label: "kalorie", value: root.shownKcal + " kcal" },
               { label: "czas", value: Model.formatDuration(root.shownElapsed) },
               { label: "dystans", value: Model.formatDistance(root.shownDistance) }
