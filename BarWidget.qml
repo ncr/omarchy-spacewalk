@@ -46,6 +46,11 @@ BarWidget {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
+  // Szerokość kreski, którą bar rysuje pod widgetem z otwartym panelem. Bez tej
+  // podpowiedzi bar bierze 55% szerokości slotu (Bar.qml:1575) i wychodzi krótki
+  // kikut; oficjalne widgety podają tu szerokość swojej treści, tak jak zegar.
+  readonly property real openPanelIndicatorWidth: button.contentWidth
+
   onBarChanged: { injectPanel(); pushSettings() }
   onSettingsChanged: { injectPanel(); pushSettings() }
   onServiceChanged: { injectPanel(); pushSettings() }
@@ -75,6 +80,9 @@ BarWidget {
     implicitHeight: root.bar ? root.bar.barSize : Style.space(24)
 
     readonly property real glyphSlot: (icon.implicitWidth + Style.space(6)) / 2
+    // Chodzik z liczbą, bez marginesów — tyle mierzy pasek postępu i tyle samo
+    // kreska otwartego panelu.
+    readonly property real contentWidth: icon.implicitWidth + Style.space(6) + number.implicitWidth
 
     Text {
       id: number
@@ -113,7 +121,7 @@ BarWidget {
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.top: parent.top
       anchors.topMargin: Style.space(2)
-      width: Math.round(icon.implicitWidth + Style.space(6) + number.implicitWidth)
+      width: Math.round(button.contentWidth)
       height: Style.space(2)
       radius: height / 2
       color: root.bar ? Style.selectedFillFor(root.bar.barForeground, Color.accent)
