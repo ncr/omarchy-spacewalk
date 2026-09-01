@@ -18,7 +18,10 @@ BarWidget {
   readonly property int goal: service ? service.dailyGoal : 10000
   readonly property int steps: service ? service.daySteps : 0
   readonly property real progress: Model.progress(steps, goal)
-  readonly property string glyph: service && service.walking ? "󰗇" : "󰖃"
+  // Jeden stały chodzik. Drugi glif na czas marszu odpadł: w tej czcionce nie
+  // ma postaci biegacza i wychodził z niego obcy znaczek. Co robi bieżnia,
+  // widać w panelu.
+  readonly property string glyph: "󰖃"
 
   function injectPanel() {
     var target = panelLoader.item

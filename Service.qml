@@ -39,6 +39,20 @@ Item {
   property int sessionElapsedS: 0
   property bool walking: false
   property string lastError: ""
+  // Przebieg startu, pokazywany w panelu. Bieżnia rusza z opóźnieniem i cele
+  // przyjmuje dopiero po rozpędzeniu, więc bez tego Start wygląda na martwy.
+  property string phaseName: ""
+  property string phaseText: ""
+  // running | paused | stopped. Pauza znaczy, że zszedłeś z taśmy i można
+  // wznowić; stop, że bieżnia stanęła na komendę albo wyłącznikiem.
+  property string beltState: "stopped"
+  readonly property bool paused: beltState === "paused"
+
+  Timer {
+    id: phaseClear
+    interval: 6000
+    onTriggered: { root.phaseName = ""; root.phaseText = "" }
+  }
   property int linesSeen: 0
 
   // Dwie próbki kroków ze znacznikiem czasu — tempo liczy się z ostatniej minuty,
@@ -82,8 +96,14 @@ Item {
 
   // Most sam dosyła prędkość i nachylenie kilkanaście sekund po starcie —
   // bieżnia ignoruje cele zadane, zanim rozpędzi się do 1 km/h.
+  //
+  // Startujemy tym, co widać w panelu (targetSpeed/targetIncline), a nie
+  // wartościami z ustawień: przy stojącej taśmie strzałki zmieniają właśnie te
+  // pierwsze i bieżnia ma je uszanować po starcie.
   function start() {
-    send("start " + Number(startSpeed).toFixed(1) + " " + Math.round(startIncline))
+    phaseText = "wysyłam start..."
+    phaseName = "sending"
+    send("start " + Number(targetSpeed).toFixed(1) + " " + Math.round(targetIncline))
   }
 
   function stop() { send("stop") }
@@ -119,6 +139,13 @@ Item {
       if (msg.state !== "connected") walking = false
     } else if (msg.t === "error") {
       lastError = msg.msg || ""
+    } else if (msg.t === "phase") {
+      phaseName = msg.phase || ""
+      phaseText = msg.text || ""
+      // Komunikat o jadącej taśmie sam znika — reszta zostaje, bo opisuje stan.
+      if (phaseName === "running") phaseClear.restart()
+    } else if (msg.t === "belt") {
+      beltState = msg.state || "stopped"
     } else if (msg.t === "targets") {
       if (msg.target_speed !== null && msg.target_speed !== undefined) targetSpeed = msg.target_speed
       if (msg.target_incline !== null && msg.target_incline !== undefined) targetIncline = msg.target_incline
@@ -162,6 +189,7 @@ Item {
       return JSON.stringify({
         linkState: root.linkState, linesSeen: root.linesSeen, speed: root.speed,
         incline: root.incline, targetSpeed: root.targetSpeed, targetIncline: root.targetIncline,
+        beltState: root.beltState, phase: root.phaseName, phaseText: root.phaseText,
         walking: root.walking, daySteps: root.daySteps,
         dayKcal: root.dayKcal, dayElapsedS: root.dayElapsedS,
         dayDistanceM: root.dayDistanceM, lastError: root.lastError

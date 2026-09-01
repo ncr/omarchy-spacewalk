@@ -43,16 +43,85 @@ Panel {
 
   readonly property string caption: Model.goalCaption(steps, goal, stepsPerMinute, clockNow)
 
-  readonly property string stateLabel: {
+  // Kłopoty opisujemy rzeczowo; dopiero gdy wszystko gra, w tej linii chodzi
+  // karuzela (wzorem omaphones).
+  readonly property string problemLabel: {
     if (!service) return "brak serwisu"
     switch (service.linkState) {
-      case "connected": return service.walking ? "idzie" : "połączona, stoi"
       case "connecting": return "łączę..."
       case "scanning": return "szukam bieżni..."
-      case "not_found": return "nie znalazłem bieżni"
+      case "not_found": return "bieżnia nieosiągalna — pstryknij wyłącznikiem"
       case "disconnected": return "rozłączona"
+      case "connected": return ""
       default: return service.linkState
     }
+  }
+
+  readonly property var walkingPhrases: [
+    "Idziesz.",
+    "Nogi robią swoje",
+    "Biurko stoi, ty nie",
+    "Krok po kroku do dziesiątki",
+    "Taśma pod kontrolą",
+    "Dziś nogi zarabiają na siedzenie"
+  ]
+
+  readonly property var pausedPhrases: [
+    "Spauzowana — zszedłeś z taśmy",
+    "Taśma czeka",
+    "Wróć, licznik stoi",
+    "Przerwa. Krótka, prawda?"
+  ]
+
+  readonly property var idlePhrases: [
+    "Bieżnia gotowa",
+    "Taśma czeka na Start",
+    "Zero kroków samo nie urośnie",
+    "Nachylenie ustawione, reszta należy do Ciebie"
+  ]
+
+  readonly property var phrases: {
+    if (!service || problemLabel !== "") return []
+    if (service.walking) return walkingPhrases
+    return service.paused ? pausedPhrases : idlePhrases
+  }
+
+  property int phraseIndex: 0
+  readonly property bool rotating: opened && phrases.length > 1
+  readonly property string stateLabel: problemLabel !== ""
+    ? problemLabel
+    : (phrases.length > 0 ? phrases[phraseIndex % phrases.length] : "")
+
+  // Nowy zestaw fraz zaczyna się od pierwszej, żeby zmiana stanu od razu mówiła,
+  // co się stało, zamiast wpadać w środek poprzedniej karuzeli.
+  onPhrasesChanged: phraseIndex = 0
+
+  Timer {
+    interval: 2800
+    running: root.rotating
+    repeat: true
+    onTriggered: phraseSwap.restart()
+  }
+
+  SequentialAnimation {
+    id: phraseSwap
+    PropertyAnimation {
+      target: stateText; property: "opacity"
+      to: 0.0; duration: 180; easing.type: Easing.OutQuad
+    }
+    ScriptAction { script: root.phraseIndex = root.phraseIndex + 1 }
+    PropertyAnimation {
+      target: stateText; property: "opacity"
+      to: 0.55; duration: 220; easing.type: Easing.InQuad
+    }
+  }
+
+  // Napis na głównym przycisku: pauza to zejście z taśmy, więc wraca się do niej
+  // wznowieniem, nie startem od nowa.
+  readonly property string mainButtonLabel: {
+    if (!service) return "Start"
+    if (service.walking) return "Zatrzymaj"
+    return service.paused ? "Wznów" : "Start"
   }
 
   function open() {
@@ -304,12 +373,12 @@ Panel {
           spacing: Style.space(10)
 
           Button {
-            text: root.service && root.service.walking ? "Zatrzymaj" : "Start"
+            text: root.mainButtonLabel
             enabled: root.service && root.service.connected
             onClicked: {
               if (!root.service) return
               if (root.service.walking) root.service.stop()
-              else root.service.start()
+              else root.service.start()   // start i wznowienie to ta sama komenda
             }
           }
 
@@ -320,8 +389,24 @@ Panel {
           }
         }
 
+        // ---- co się właśnie dzieje ze startem
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          visible: text !== ""
+          text: root.service ? root.service.phaseText : ""
+          color: root.service && root.service.phaseName === "failed"
+                 ? (root.bar ? root.bar.urgent : Color.urgent) : root.fg
+          opacity: 0.8
+          font.family: root.family
+          font.pixelSize: Style.font.bodySmall
+          width: parent.width - Style.space(32)
+          horizontalAlignment: Text.AlignHCenter
+          wrapMode: Text.WordWrap
+        }
+
         // ---- stan połączenia
         Text {
+          id: stateText
           anchors.horizontalCenter: parent.horizontalCenter
           text: root.stateLabel + (root.service && root.service.lastError !== ""
                                    ? " — " + root.service.lastError : "")

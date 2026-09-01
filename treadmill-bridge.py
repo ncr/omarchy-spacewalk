@@ -162,7 +162,7 @@ class DayTotals:
     def __init__(self):
         self.day = date.today()
         self.totals = {f: 0.0 for f in self.FIELDS}
-        self.session = {f: 0.0 for f in self.FIELDS}
+        self.session = {f: None for f in self.FIELDS}
         self.dirty = False
         self.load()
 
@@ -201,7 +201,7 @@ class DayTotals:
         self.save()
         self.day = today
         self.totals = {f: 0.0 for f in self.FIELDS}
-        self.session = {f: 0.0 for f in self.FIELDS}
+        self.session = {f: None for f in self.FIELDS}
         self.load()
 
     def update(self, sample: dict):
@@ -220,8 +220,16 @@ class DayTotals:
                 continue
             value = float(sample[f])
             previous = self.session[f]
+            if previous is None:
+                # Pierwszy odczyt po starcie albo po połączeniu: nie wiadomo,
+                # ile z tego licznika już zaliczyliśmy, więc służy on wyłącznie
+                # za punkt odniesienia. Bez tego naciśnięcie Startu doliczało
+                # cały licznik poprzedniego przejścia jeszcze raz.
+                self.session[f] = value
+                deltas[f] = 0.0
+                continue
             if value < previous:
-                # Bieżnia wyzerowała licznik — nowa sesja zaczyna się od zera.
+                # Bieżnia wyzerowała licznik — liczymy od zera.
                 previous = 0.0
             deltas[f] = value - previous
             self.session[f] = value
@@ -235,7 +243,9 @@ class DayTotals:
                 self.dirty = True
 
     def new_session(self):
-        self.session = {f: 0.0 for f in self.FIELDS}
+        """Kasuje punkt odniesienia, nie zeruje go: dopiero pierwszy odczyt
+        powie, od czego liczyć przyrosty."""
+        self.session = {f: None for f in self.FIELDS}
 
     def snapshot(self) -> dict:
         return {
@@ -384,11 +394,16 @@ class PhoneServer:
         return "404 Not Found", {"error": "nie ma takiego adresu"}
 
     async def serve(self):
-        try:
-            server = await asyncio.start_server(self.handle, self.host, self.port)
-        except OSError as exc:
-            error(f"serwer dla telefonu nie wystartował na {self.host}:{self.port}: {exc}")
-            return
+        # Ponawiamy, zamiast się poddać: przy restarcie shella poprzedni most
+        # potrafi jeszcze przez chwilę trzymać port, a zakończenie tego zadania
+        # ubijało cały most (run() kończy się na pierwszym gotowym zadaniu).
+        while True:
+            try:
+                server = await asyncio.start_server(self.handle, self.host, self.port)
+                break
+            except OSError as exc:
+                error(f"port {self.host}:{self.port} zajęty ({exc}) — ponawiam za 5 s")
+                await asyncio.sleep(5.0)
         # Własny typ, nie status: „status" opisuje połączenie z bieżnią i panel
         # bierze go wprost jako stan łącza.
         emit({"t": "server", "address": f"{self.host}:{self.port}"})
@@ -415,6 +430,10 @@ class Bridge:
         self.session_last_move: float = 0.0
         self.session_peak: dict = {}
         self.server: PhoneServer | None = None
+        # running | paused | stopped — pauza to zejście z taśmy, stop to komenda
+        # albo wyłącznik bezpieczeństwa. Bieżnia rozróżnia jedno od drugiego
+        # w statusie maszyny, panel pokazuje to i proponuje wznowienie.
+        self.belt_state = "stopped"
 
     @property
     def running_belt(self) -> bool:
@@ -474,6 +493,12 @@ class Bridge:
         emit({"t": "targets", "target_speed": self.target_speed,
               "target_incline": self.target_incline})
 
+    def phase(self, name: str, text: str):
+        """Postęp startu dla panelu. Bieżnia rusza z opóźnieniem, potwierdza
+        komendy po kilku sekundach i cele przyjmuje dopiero po rozpędzeniu —
+        bez tego przycisk Start wygląda, jakby nic nie zrobił."""
+        emit({"t": "phase", "phase": name, "text": text})
+
     # ---- odbiór
 
     def steps_from(self, sample: dict) -> float | None:
@@ -507,10 +532,25 @@ class Bridge:
             emit({"t": "control", "raw": raw.hex(" ")})
 
     def on_machine_status(self, _sender, data: bytearray):
+        """Stan maszyny (FTMS 4.17): 0x02 to zatrzymanie przez użytkownika,
+        gdzie parametr 0x01 znaczy stop, a 0x02 pauzę — bieżnia sama pauzuje,
+        gdy nikt na niej nie stoi. 0x04 to start albo wznowienie."""
         raw = bytes(data)
         emit({"t": "machine", "raw": raw.hex(" ")})
-        if raw and raw[0] in (0x02, 0x03, 0x04):  # stop, pauza, zatrzymanie awaryjne
+        if raw[:1] == b"\x02":
+            paused = len(raw) > 1 and raw[1] == 0x02
+            self.belt_state = "paused" if paused else "stopped"
+            emit({"t": "belt", "state": self.belt_state})
+            self.phase("paused" if paused else "stopped",
+                       "spauzowana — zszedłeś z taśmy" if paused else "zatrzymana")
             self.day.save()
+        elif raw[:1] == b"\x03":  # wyłącznik bezpieczeństwa
+            self.belt_state = "stopped"
+            emit({"t": "belt", "state": self.belt_state})
+            self.day.save()
+        elif raw[:1] == b"\x04":
+            self.belt_state = "running"
+            emit({"t": "belt", "state": self.belt_state})
 
     # ---- wysyłka
 
@@ -540,28 +580,42 @@ class Bridge:
             return False
         return True
 
+    def targets_reached(self) -> bool:
+        speed_ok = (self.target_speed is None
+                    or abs(self.latest.get("speed", 0) - self.target_speed) < 0.05)
+        incline_ok = (self.target_incline is None
+                      or abs(self.latest.get("incline", 0) - self.target_incline) < 0.05)
+        return speed_ok and incline_ok
+
     async def apply_targets(self):
         """Dosyła prędkość i nachylenie po starcie, aż bieżnia je pokaże."""
-        for _ in range(4):
-            await asyncio.sleep(8.0)
+        self.phase("spinup", "taśma rusza, czekam aż się rozpędzi")
+        for attempt in range(5):
+            await asyncio.sleep(6.0)
             if not self.client or not self.client.is_connected:
+                self.phase("error", "rozłączyło bieżnię")
                 return
             # Taśma stanęła (bieżnia zatrzymuje się sama, gdy nikt na niej nie
             # stoi) — dosyłanie celów do stojącej maszyny zwraca same błędy.
             if self.latest.get("speed", 0) <= 0:
+                self.phase("failed", "taśma nie ruszyła")
                 return
-            speed_ok = (self.target_speed is None
-                        or abs(self.latest.get("speed", 0) - self.target_speed) < 0.05)
-            incline_ok = (self.target_incline is None
-                          or abs(self.latest.get("incline", 0) - self.target_incline) < 0.05)
-            if speed_ok and incline_ok:
+            if self.targets_reached():
+                self.phase("running", self.running_text())
                 return
-            if not speed_ok:
+            if self.target_speed is not None and abs(self.latest.get("speed", 0) - self.target_speed) >= 0.05:
+                self.phase("setting", f"zadaję {self.target_speed:.1f} km/h".replace(".", ","))
                 await self.send_command(OP_SET_SPEED,
                                         round(self.target_speed * 100).to_bytes(2, "little"))
-            if not incline_ok:
+            if self.target_incline is not None and abs(self.latest.get("incline", 0) - self.target_incline) >= 0.05:
+                self.phase("setting", f"zadaję nachylenie {round(self.target_incline)}")
                 await self.send_command(OP_SET_INCLINATION,
                                         round(self.target_incline * 10).to_bytes(2, "little", signed=True))
+        self.phase("running" if self.targets_reached() else "partial", self.running_text())
+
+    def running_text(self) -> str:
+        speed = f"{self.latest.get('speed', 0):.1f}".replace(".", ",")
+        return f"jedzie {speed} km/h, nachylenie {round(self.latest.get('incline', 0))}"
 
     async def request_control(self) -> bool:
         if self.has_control:
@@ -585,26 +639,35 @@ class Bridge:
             emit({"t": "data", **self.day.snapshot()})
             return
 
+        if cmd == "start":
+            self.phase("control", "przejmuję sterowanie bieżnią")
         if not await self.request_control():
+            if cmd == "start":
+                self.phase("error", "bieżnia nie oddała sterowania")
             return
 
         if cmd == "start":
             self.day.new_session()
-            # Brak potwierdzenia nie znaczy, że taśma nie ruszyła — bywa, że
-            # odpowiedź gubi się, a bieżnia startuje. Cele dosyłamy tak czy siak;
-            # apply_targets i tak przerwie, gdy taśma stoi.
-            await self.send_command(OP_START)
             if args:
                 self.target_speed = float(args[0])
             if len(args) > 1:
                 self.target_incline = float(args[1])
+            self.publish_targets()
+            self.phase("starting", "wysłałem start, czekam na potwierdzenie")
+            # Brak potwierdzenia nie znaczy, że taśma nie ruszyła — bywa, że
+            # odpowiedź gubi się, a bieżnia startuje. Cele dosyłamy tak czy siak;
+            # apply_targets i tak przerwie, gdy taśma stoi.
+            if not await self.send_command(OP_START):
+                self.phase("unconfirmed", "brak potwierdzenia, sprawdzam czy ruszyła")
             asyncio.create_task(self.apply_targets())
         elif cmd == "stop":
             if await self.send_command(OP_STOP, bytes([0x01])):
                 self.day.save()
+                self.phase("stopped", "zatrzymana")
         elif cmd == "pause":
             if await self.send_command(OP_STOP, bytes([0x02])):
                 self.day.save()
+                self.phase("stopped", "pauza")
         elif cmd == "speed" and args:
             kmh = max(0.0, float(args[0]))
             self.target_speed = kmh
@@ -752,10 +815,15 @@ class Bridge:
         stdin_task = asyncio.create_task(self.stdin_loop())
         conn_task = asyncio.create_task(self.connection_loop())
         save_task = asyncio.create_task(self.save_loop())
-        tasks = [stdin_task, conn_task, save_task]
-        if self.server is not None:
-            tasks.append(asyncio.create_task(self.server.serve()))
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        server_task = asyncio.create_task(self.server.serve()) if self.server else None
+        # Czekamy tylko na zadania, których koniec naprawdę znaczy koniec pracy:
+        # zamknięty stdin (zniknął shell) albo przerwana pętla połączeń.
+        # Serwer dla telefonu żyje obok i jego kłopoty nie mogą ubić mostu.
+        done, pending = await asyncio.wait([stdin_task, conn_task],
+                                           return_when=asyncio.FIRST_COMPLETED)
+        if server_task:
+            server_task.cancel()
+        save_task.cancel()
         for task in pending:
             task.cancel()
         self.day.save()
