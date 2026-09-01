@@ -76,16 +76,70 @@ Panel {
     }
   }
 
-  // Podtytuł nagłówka: kłopot, jeśli jest, inaczej to, co taśma właśnie robi.
-  readonly property string heroMeta: {
-    if (problemLabel !== "") return problemLabel
-    if (!service) return ""
-    if (service.walking)
-      return shownSpeed.toFixed(1).replace(".", ",") + " km/h · nachylenie "
-             + Math.round(shownIncline)
-    if (service.paused) return "zszedłeś z taśmy — przełącz, żeby wrócić"
-    return "gotowa · " + shownSpeed.toFixed(1).replace(".", ",") + " km/h po starcie"
+  // Podtytuł nagłówka: kłopot opisujemy rzeczowo, a gdy wszystko gra, chodzi
+  // tu karuzela zdań — inna dla idącej taśmy, inna dla stojącej. Prędkość
+  // i nachylenie i tak stoją niżej, w kafelkach.
+  readonly property var walkingPhrases: [
+    "Idziesz.",
+    "Nogi robią swoje",
+    "Biurko stoi, ty nie",
+    "Krok po kroku do dziesiątki",
+    "Taśma pod kontrolą",
+    "Dziś nogi zarabiają na siedzenie"
+  ]
+
+  readonly property var pausedPhrases: [
+    "Zszedłeś z taśmy — przełącz, żeby wrócić",
+    "Taśma czeka",
+    "Licznik stoi i patrzy",
+    "Przerwa. Krótka, prawda?"
+  ]
+
+  readonly property var idlePhrases: [
+    "Bieżnia gotowa",
+    "Taśma czeka na przełącznik",
+    "Zero kroków samo nie urośnie",
+    "Nachylenie ustawione, reszta należy do Ciebie"
+  ]
+
+  readonly property var phrases: {
+    if (!service || problemLabel !== "") return []
+    if (service.walking) return walkingPhrases
+    return service.paused ? pausedPhrases : idlePhrases
   }
+
+  property int phraseIndex: 0
+  readonly property bool rotating: opened && phrases.length > 1
+  readonly property string heroMeta: problemLabel !== ""
+    ? problemLabel
+    : (phrases.length > 0 ? phrases[phraseIndex % phrases.length] : "")
+
+  // Nowy zestaw zaczyna się od pierwszego zdania, żeby zmiana stanu od razu
+  // mówiła, co się stało, zamiast wpadać w środek poprzedniej karuzeli.
+  onPhrasesChanged: phraseIndex = 0
+
+  Timer {
+    interval: 2800
+    running: root.rotating
+    repeat: true
+    onTriggered: phraseSwap.restart()
+  }
+
+  SequentialAnimation {
+    id: phraseSwap
+    PropertyAnimation {
+      target: hero; property: "metaOpacity"
+      to: 0.0; duration: 180; easing.type: Easing.OutQuad
+    }
+    ScriptAction { script: root.phraseIndex = root.phraseIndex + 1 }
+    PropertyAnimation {
+      target: hero; property: "metaOpacity"
+      to: 1.0; duration: 220; easing.type: Easing.InQuad
+    }
+  }
+
+  // Przerwana w pół animacja zostawiłaby zdanie w połowie wygaszone.
+  onRotatingChanged: if (!rotating) { phraseSwap.stop(); hero.metaOpacity = 1.0 }
 
   readonly property int gridWeeks: 13
   readonly property var gridModel: service && opened
