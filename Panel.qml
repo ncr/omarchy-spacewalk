@@ -80,43 +80,81 @@ Panel {
   // tu karuzela zdań — inna dla idącej taśmy, inna dla stojącej. Prędkość
   // i nachylenie i tak stoją niżej, w kafelkach.
   readonly property var walkingPhrases: [
-    "Idziesz.",
-    "Nogi robią swoje",
-    "Biurko stoi, ty nie",
-    "Krok po kroku do dziesiątki",
-    "Taśma pod kontrolą",
-    "Dziś nogi zarabiają na siedzenie"
+    "You are walking",
+    "Legs doing the work",
+    "The desk sits, you do not",
+    "Step by step to 10k",
+    "Belt under control",
+    "Legs earning the chair"
   ]
 
   readonly property var pausedPhrases: [
-    "Zszedłeś z taśmy — przełącz, żeby wrócić",
-    "Taśma czeka",
-    "Licznik stoi i patrzy",
-    "Przerwa. Krótka, prawda?"
+    "Stepped off the belt",
+    "The belt is waiting",
+    "Counter on hold",
+    "Short break, right?"
   ]
 
   readonly property var idlePhrases: [
-    "Bieżnia gotowa",
-    "Taśma czeka na przełącznik",
-    "Zero kroków samo nie urośnie",
-    "Nachylenie ustawione, reszta należy do Ciebie"
+    "Treadmill ready",
+    "Waiting for the switch",
+    "Zero steps will not grow",
+    "Incline set, your move"
   ]
 
-  readonly property var phrases: {
-    if (!service || problemLabel !== "") return []
-    if (service.walking) return walkingPhrases
-    return service.paused ? pausedPhrases : idlePhrases
+  // Podtytuł nagłówka idzie wielkimi literami z rozstrzeleniem i przycina
+  // nadmiar wielokropkiem, więc zdania trzeba zmierzyć, a nie liczyć znaki
+  // na oko: to, co mieści się w jednym motywie, w innym już nie.
+  TextMetrics {
+    id: metaMetrics
+    font.family: root.family
+    font.pixelSize: Style.font.caption
+    font.bold: true
+    font.letterSpacing: 1.2
   }
+
+  // Tyle miejsca zostaje podtytułowi: szerokość nagłówka bez ikony, odstępów
+  // i przełącznika na prawej krawędzi.
+  readonly property real metaSpace: hero.width - hero.trailingInset - Style.font.display - Style.space(20)
+
+  function fitsInHeader(text) {
+    metaMetrics.text = String(text).toUpperCase()
+    return metaMetrics.width <= metaSpace
+  }
+
+  function fitting(list) {
+    var out = []
+    for (var i = 0; i < list.length; i++) if (fitsInHeader(list[i])) out.push(list[i])
+    return out.length > 0 ? out : [list[0]]
+  }
+
+  // Który zestaw zdań obowiązuje. Osobno od samej listy, bo mierzenie tekstu
+  // zmienia właściwość TextMetrics — w wiązaniu robiłoby to pętlę.
+  readonly property string phraseSet: {
+    if (!service || problemLabel !== "") return "none"
+    if (service.walking) return "walk"
+    return service.paused ? "pause" : "idle"
+  }
+
+  property var phrases: []
+
+  function refreshPhrases() {
+    if (phraseSet === "none") { phrases = []; return }
+    if (phraseSet === "walk") phrases = fitting(walkingPhrases)
+    else if (phraseSet === "pause") phrases = fitting(pausedPhrases)
+    else phrases = fitting(idlePhrases)
+    phraseIndex = 0
+  }
+
+  onPhraseSetChanged: refreshPhrases()
+  onMetaSpaceChanged: refreshPhrases()
+  Component.onCompleted: refreshPhrases()
 
   property int phraseIndex: 0
   readonly property bool rotating: opened && phrases.length > 1
   readonly property string heroMeta: problemLabel !== ""
     ? problemLabel
     : (phrases.length > 0 ? phrases[phraseIndex % phrases.length] : "")
-
-  // Nowy zestaw zaczyna się od pierwszego zdania, żeby zmiana stanu od razu
-  // mówiła, co się stało, zamiast wpadać w środek poprzedniej karuzeli.
-  onPhrasesChanged: phraseIndex = 0
 
   Timer {
     interval: 2800
