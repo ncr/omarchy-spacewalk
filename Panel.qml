@@ -441,7 +441,7 @@ Panel {
             }
           }
 
-          // Średnia dzienna z całego okresu — jedna liczba, która podsumowuje kratkę.
+          // Średnia z dni marszu — jedna liczba, która podsumowuje kratkę.
           Text {
             width: parent.width
             height: Math.round(Style.font.bodySmall * 1.6)
@@ -449,7 +449,7 @@ Panel {
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
             visible: root.hasHistory
-            text: Model.formatSteps(root.dayAverage.steps) + " — średnia dzienna"
+            text: Model.formatSteps(root.dayAverage.steps) + " — średnia z dni marszu"
             color: root.fg
             opacity: 0.55
             font.family: root.family

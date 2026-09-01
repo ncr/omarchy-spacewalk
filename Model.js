@@ -140,25 +140,14 @@ function gridDays(history, todayDate, weeks) {
   return out
 }
 
-// Średnia z całego okresu: od pierwszego zapisanego dnia do dziś, licząc dni bez
-// marszu jako zero. Mianownikiem jest kalendarz, nie liczba dni z zapisem — inaczej
-// dzień, w którym most nic nie zapisał, po cichu wypadałby ze średniej.
+// Średnia z dni, w które faktycznie chodziłeś. Dni bez marszu zaniżałyby ją tak,
+// że przestałaby cokolwiek mówić o samym chodzeniu.
 function averageSteps(history) {
-  var first = null, sum = 0
+  var sum = 0, days = 0
   for (var k in history) {
-    sum += history[k].steps
-    if (first === null || k < first) first = k
+    if (history[k].steps > 0) { sum += history[k].steps; days++ }
   }
-  if (first === null) return { steps: 0, days: 0 }
-
-  var start = parseKey(first)
-  var today = new Date()
-  var msPerDay = 24 * 60 * 60 * 1000
-  var days = Math.floor((Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())
-                       - Date.UTC(start.getFullYear(), start.getMonth(), start.getDate()))
-                       / msPerDay) + 1
-  if (days < 1) days = 1
-  return { steps: Math.round(sum / days), days: days }
+  return days > 0 ? { steps: Math.round(sum / days), days: days } : { steps: 0, days: 0 }
 }
 
 function daysWithGoal(history, goal) {
