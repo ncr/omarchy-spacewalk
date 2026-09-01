@@ -4,7 +4,7 @@
   "name": "Spacewalk",
   "version": "0.1.0",
   "author": "Jacek Becela",
-  "description": "Kroki, kalorie, czas i dystans z bie\u017cni Urevo SpaceWalk 3S, plus sterowanie pr\u0119dko\u015bci\u0105 i nachyleniem",
+  "description": "Steps, calories, time and distance from a Urevo SpaceWalk 3S, with speed and incline control",
   "kinds": [
     "service",
     "bar-widget"
@@ -16,7 +16,7 @@
   },
   "barWidget": {
     "displayName": "Spacewalk",
-    "description": "Kroki dnia z paskiem post\u0119pu do celu",
+    "description": "Today's steps with a progress bar toward the goal",
     "category": "Health",
     "allowMultiple": false,
     "defaultSection": "right",
@@ -31,27 +31,27 @@
       {
         "key": "address",
         "type": "string",
-        "label": "Adres bie\u017cni (puste = szukaj po FTMS)"
+        "label": "Treadmill address (empty = scan for FTMS)"
       },
       {
         "key": "dailyGoal",
         "type": "number",
-        "label": "Cel dzienny (kroki)"
+        "label": "Daily goal (steps)"
       },
       {
         "key": "startSpeed",
         "type": "number",
-        "label": "Pr\u0119dko\u015b\u0107 startowa (km/h)"
+        "label": "Speed on start (km/h)"
       },
       {
         "key": "startIncline",
         "type": "number",
-        "label": "Nachylenie startowe"
+        "label": "Incline on start"
       },
       {
         "key": "strideMeters",
         "type": "number",
-        "label": "D\u0142ugo\u015b\u0107 kroku w metrach (0 = kroki z bie\u017cni)"
+        "label": "Stride length in metres (0 = steps from the treadmill)"
       }
     ]
   }

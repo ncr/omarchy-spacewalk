@@ -65,12 +65,12 @@ Panel {
   // Kłopoty opisujemy rzeczowo; dopiero gdy wszystko gra, w tej linii chodzi
   // karuzela (wzorem omaphones).
   readonly property string problemLabel: {
-    if (!service) return "brak serwisu"
+    if (!service) return "no service"
     switch (service.linkState) {
-      case "connecting": return "łączę..."
-      case "scanning": return "szukam bieżni..."
-      case "not_found": return "bieżnia nieosiągalna — pstryknij wyłącznikiem"
-      case "disconnected": return "rozłączona"
+      case "connecting": return "connecting..."
+      case "scanning": return "looking for the treadmill..."
+      case "not_found": return "treadmill out of reach — flip its power switch"
+      case "disconnected": return "disconnected"
       case "connected": return ""
       default: return service.linkState
     }
@@ -326,8 +326,8 @@ Panel {
                 PanelToolTip {
                   visible: beltSwitch.containsMouse
                   text: root.service && root.service.walking
-                        ? "zatrzymuje taśmę; licznik dnia zostaje"
-                        : "rusza z ustawioną prędkością i nachyleniem"
+                        ? "stops the belt; the day count stays"
+                        : "starts at the set speed and incline"
                   fontFamily: root.family
                 }
               }
@@ -406,9 +406,9 @@ Panel {
 
           Repeater {
             model: [
-              { label: "kalorie", value: root.shownKcal + " kcal" },
-              { label: "czas", value: Model.formatDuration(root.shownElapsed) },
-              { label: "dystans", value: Model.formatDistance(root.shownDistance) }
+              { label: "calories", value: root.shownKcal + " kcal" },
+              { label: "time", value: Model.formatDuration(root.shownElapsed) },
+              { label: "distance", value: Model.formatDistance(root.shownDistance) }
             ]
             Column {
               required property var modelData
@@ -517,7 +517,7 @@ Panel {
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
             visible: root.hasHistory
-            text: "Robisz średnio " + Model.formatSteps(root.dayAverage.steps) + " kroków dziennie"
+            text: "You average " + Model.formatSteps(root.dayAverage.steps) + " steps a day"
             color: root.fg
             opacity: 0.55
             font.family: root.family
@@ -527,7 +527,7 @@ Panel {
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
             visible: !root.hasHistory
-            text: "historia buduje się od pierwszego marszu"
+            text: "history starts with your first walk"
             color: root.fg
             opacity: 0.5
             font.family: root.family
@@ -547,9 +547,9 @@ Panel {
               // Podpisy stałe: „prędkość po starcie" nie mieściła się w kafelku
               // i rozpychała oba. Że wartość dopiero czeka na start, widać po
               // przygaszeniu i z podpowiedzi.
-              { kind: "speed", label: "prędkość",
-                value: root.shownSpeed.toFixed(1).replace(".", ",") + " km/h" },
-              { kind: "incline", label: "nachylenie",
+              { kind: "speed", label: "speed",
+                value: root.shownSpeed.toFixed(1) + " km/h" },
+              { kind: "incline", label: "incline",
                 value: String(Math.round(root.shownIncline)) }
             ]
 
@@ -568,8 +568,8 @@ Panel {
                 PanelActionButton {
                   anchors.verticalCenter: parent.verticalCenter
                   iconText: "−"
-                  tooltipText: (modelData.kind === "speed" ? "wolniej o 0,5 km/h" : "nachylenie w dół")
-                               + (root.service && root.service.walking ? "" : " — zadam po starcie")
+                  tooltipText: (modelData.kind === "speed" ? "0.5 km/h slower" : "lower the incline")
+                               + (root.service && root.service.walking ? "" : " — set once it starts")
                   foreground: root.fg
                   enabled: root.service !== null
                   onClicked: modelData.kind === "speed" ? root.bumpSpeed(-0.5) : root.bumpIncline(-1)
@@ -606,8 +606,8 @@ Panel {
                 PanelActionButton {
                   anchors.verticalCenter: parent.verticalCenter
                   iconText: "+"
-                  tooltipText: (modelData.kind === "speed" ? "szybciej o 0,5 km/h" : "nachylenie w górę")
-                               + (root.service && root.service.walking ? "" : " — zadam po starcie")
+                  tooltipText: (modelData.kind === "speed" ? "0.5 km/h faster" : "raise the incline")
+                               + (root.service && root.service.walking ? "" : " — set once it starts")
                   foreground: root.fg
                   enabled: root.service !== null
                   onClicked: modelData.kind === "speed" ? root.bumpSpeed(0.5) : root.bumpIncline(1)

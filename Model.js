@@ -58,7 +58,7 @@ function formatSteps(steps) {
 function formatDistance(meters) {
   var m = Math.round(meters || 0)
   if (m < 1000) return m + " m"
-  return (m / 1000).toFixed(2).replace(".", ",") + " km"
+  return (m / 1000).toFixed(2) + " km"
 }
 
 function formatDuration(seconds) {
@@ -72,20 +72,20 @@ function formatDuration(seconds) {
 // Podpis pod paskiem postępu: ile zostało i o której koniec.
 function goalCaption(steps, goal, stepsPerMinute, now) {
   var left = remaining(steps, goal)
-  if (left === 0) return "cel osiągnięty"
+  if (left === 0) return "goal reached"
   var minutes = minutesToGoal(steps, goal, stepsPerMinute)
-  var text = "zostało " + formatSteps(left)
+  var text = formatSteps(left) + " to go"
   if (minutes < 0) return text
   var clock = finishClock(now, minutes)
-  return text + " — koniec ok. " + clock + " (" + Math.round(minutes) + " min)"
+  return text + " — done around " + clock + " (" + Math.round(minutes) + " min)"
 }
 
 // Podpis dla dnia z przeszłości — w miejscu, gdzie dla dzisiaj stoi prognoza
 // końca. Bez niego panel skakał przy każdym kliknięciu w kratkę.
 function pastDayCaption(steps, goal) {
-  if (steps <= 0) return "bez marszu"
-  if (steps >= goal) return "cel osiągnięty (" + Math.round(steps / goal * 100) + "%)"
-  return "zabrakło " + formatSteps(goal - steps) + " do celu"
+  if (steps <= 0) return "no walking"
+  if (steps >= goal) return "goal reached (" + Math.round(steps / goal * 100) + "%)"
+  return formatSteps(goal - steps) + " short of the goal"
 }
 
 // ---------------------------------------------------------------- kratka dni
@@ -156,9 +156,9 @@ function daysWithGoal(history, goal) {
   return n
 }
 
-var MONTHS = ["stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca",
-              "lipca", "sierpnia", "września", "października", "listopada", "grudnia"]
+var MONTHS = ["January", "February", "March", "April", "May", "June",
+              "July", "August", "September", "October", "November", "December"]
 
 function formatDay(date) {
-  return date.getDate() + " " + MONTHS[date.getMonth()]
+  return MONTHS[date.getMonth()] + " " + date.getDate()
 }
