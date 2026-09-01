@@ -246,8 +246,13 @@ Panel {
           width: parent.width
           spacing: Style.space(2)
 
+          // Oba napisy dostają całą szerokość panelu i środkują się w niej same.
+          // Przy zwykłym centrowaniu każdy z nich zmieniał szerokość razem
+          // z treścią, więc przy przesuwaniu kursora po kratkach cały blok
+          // drgał — a zmienia się tu co kratkę.
           Text {
-            anchors.horizontalCenter: parent.horizontalCenter
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
             text: Model.formatSteps(root.steps)
             color: root.fg
             font.family: root.family
@@ -256,7 +261,9 @@ Panel {
           }
 
           Text {
-            anchors.horizontalCenter: parent.horizontalCenter
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
             text: root.showingToday
                   ? "kroków z " + Model.formatSteps(root.goal)
                   : "kroków — " + Model.formatDay(Model.parseKey(root.selectedDay))
@@ -286,12 +293,17 @@ Panel {
               height: parent.height
               radius: parent.radius
               color: root.progress >= 1 ? (root.bar ? root.bar.urgent : Color.urgent) : root.fg
-              Behavior on width { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
+              // Krótko, bo przy przesuwaniu kursora po kratkach pasek dostaje
+              // nową wartość co kilkadziesiąt milisekund i dłuższa animacja
+              // zamienia się w pływanie.
+              Behavior on width { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
             }
           }
 
           Text {
-            anchors.horizontalCenter: parent.horizontalCenter
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
             text: root.caption
             color: root.fg
             opacity: 0.7
@@ -573,18 +585,23 @@ Panel {
         }
 
         // ---- co się właśnie dzieje ze startem
+        //
+        // Zawsze zajmuje swój wiersz, choćby pusty, i nigdy się nie zawija:
+        // pojawianie się tej linijki i przeskakiwanie jej na dwie linie
+        // zmieniało wysokość panelu, a panel wisi pod paskiem i rośnie w dół,
+        // więc cała zawartość podskakiwała.
         Text {
           anchors.horizontalCenter: parent.horizontalCenter
-          visible: text !== ""
+          opacity: text === "" ? 0 : 0.8
           text: root.service ? root.service.phaseText : ""
           color: root.service && root.service.phaseName === "failed"
                  ? (root.bar ? root.bar.urgent : Color.urgent) : root.fg
-          opacity: 0.8
           font.family: root.family
           font.pixelSize: Style.font.bodySmall
           width: parent.width - Style.space(32)
           horizontalAlignment: Text.AlignHCenter
-          wrapMode: Text.WordWrap
+          wrapMode: Text.NoWrap
+          elide: Text.ElideRight
         }
 
         // ---- stan połączenia
@@ -599,7 +616,8 @@ Panel {
           font.pixelSize: Style.font.caption
           width: parent.width - Style.space(32)
           horizontalAlignment: Text.AlignHCenter
-          wrapMode: Text.WordWrap
+          wrapMode: Text.NoWrap
+          elide: Text.ElideRight
         }
       }
     }
