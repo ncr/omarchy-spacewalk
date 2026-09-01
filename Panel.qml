@@ -430,38 +430,20 @@ Panel {
           }
 
           // passa, rekord, średnia — trzy liczby, które mówią, co z tej kratki wynika
-          Row {
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Style.space(24)
-            height: Math.round(Style.font.bodySmall * 1.5 + Style.font.caption * 1.7)
+          Text {
+            width: parent.width
+            height: Math.round(Style.font.bodySmall * 1.6)
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
             visible: root.hasHistory
-
-            Repeater {
-              model: [
-                { label: "średnia z " + root.walkedAverage.days
-                         + (root.walkedAverage.days === 1 ? " dnia marszu" : " dni marszu"),
-                  value: Model.formatSteps(root.walkedAverage.steps) }
-              ]
-              Column {
-                required property var modelData
-                spacing: Style.space(1)
-                Text {
-                  anchors.horizontalCenter: parent.horizontalCenter
-                  text: modelData.value
-                  color: root.fg
-                  font.family: root.family
-                  font.pixelSize: Style.font.bodySmall
-                }
-                Text {
-                  anchors.horizontalCenter: parent.horizontalCenter
-                  text: modelData.label
-                  color: root.fg
-                  opacity: 0.5
-                  font.family: root.family
-                  font.pixelSize: Style.font.caption
-                }
-              }
-            }
+            text: Model.formatSteps(root.walkedAverage.steps) + " — średnia z "
+                  + root.walkedAverage.days
+                  + (root.walkedAverage.days === 1 ? " dnia marszu" : " dni marszu")
+            color: root.fg
+            opacity: 0.55
+            font.family: root.family
+            font.pixelSize: Style.font.bodySmall
           }
 
           Text {
