@@ -59,7 +59,7 @@ Panel {
   // kliknięciu w kratkę skracało panel i wszystko pod spodem podskakiwało.
   readonly property string caption: showingToday
     ? Model.goalCaption(steps, goal, stepsPerMinute, clockNow)
-    : Model.pastDayCaption(steps, goal)
+    : Model.formatDay(Model.parseKey(selectedDay)) + " · " + Model.pastDayCaption(steps, goal)
 
   // Kłopoty opisujemy rzeczowo; dopiero gdy wszystko gra, w tej linii chodzi
   // karuzela (wzorem omaphones).
@@ -233,45 +233,21 @@ Panel {
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
+      // Kliknięcie gdziekolwiek poza kratkami i przyciskami wraca do dzisiaj.
+      // Leży pod treścią, więc przyciski i kratki łapią swoje kliknięcia same.
+      MouseArea {
+        anchors.fill: parent
+        z: -1
+        enabled: !root.showingToday
+        onClicked: root.selectedDay = ""
+      }
+
       Column {
         id: column
         width: parent.width
         spacing: Style.space(14)
         topPadding: Style.space(16)
         bottomPadding: Style.space(16)
-
-        // ---- kroki: główna liczba
-        Column {
-          width: parent.width
-          spacing: Style.space(2)
-
-          // Podglądasz inny dzień? Kliknięcie w liczbę wraca do dzisiejszej.
-          MouseArea {
-            anchors.fill: parent
-            enabled: !root.showingToday
-            onClicked: root.selectedDay = ""
-          }
-
-          Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            text: Model.formatSteps(root.steps)
-            color: root.fg
-            font.family: root.family
-            font.pixelSize: 52
-            font.bold: true
-          }
-
-          Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            text: root.showingToday
-                  ? "kroków z " + Model.formatSteps(root.goal)
-                  : "kroków — " + Model.formatDay(Model.parseKey(root.selectedDay)) + " · kliknij, by wrócić do dziś"
-            color: root.fg
-            opacity: 0.6
-            font.family: root.family
-            font.pixelSize: Style.font.body
-          }
-        }
 
         // ---- pasek postępu + kiedy koniec
         Column {
@@ -283,7 +259,9 @@ Panel {
             width: parent.width - Style.space(32)
             height: Style.space(8)
             radius: height / 2
-            color: Qt.rgba(1, 1, 1, 0.15)
+            // Ścieżka z motywu, jak przy suwakach w panelach Omarchy.
+            color: root.bar ? Style.selectedFillFor(root.bar.foreground, Color.accent)
+                            : Style.selectedFill
 
             Rectangle {
               width: parent.width * root.progress
@@ -307,10 +285,11 @@ Panel {
         // ---- kalorie, czas, dystans
         Row {
           anchors.horizontalCenter: parent.horizontalCenter
-          spacing: Style.space(28)
+          spacing: Style.space(18)
 
           Repeater {
             model: [
+              { label: "kroki", value: Model.formatSteps(root.steps) },
               { label: "kalorie", value: root.shownKcal + " kcal" },
               { label: "czas", value: Model.formatDuration(root.shownElapsed) },
               { label: "dystans", value: Model.formatDistance(root.shownDistance) }
@@ -388,8 +367,13 @@ Panel {
                 radius: Style.space(3)
                 opacity: modelData.future ? 0.25 : 1.0
                 color: root.levelColor(Model.dayLevel(modelData.steps, root.goal))
-                border.width: modelData.key === root.todayKey ? 1 : 0
-                border.color: root.bar ? root.bar.urgent : Color.urgent
+                // Wybrany dzień obrysowany kolorem tekstu, dzisiejszy kolorem
+                // alarmowym; wybór jest ważniejszy, bo to on rządzi liczbami.
+                border.width: modelData.key === root.selectedDay ? 2
+                              : (modelData.key === root.todayKey ? 1 : 0)
+                border.color: modelData.key === root.selectedDay
+                              ? root.fg
+                              : (root.bar ? root.bar.urgent : Color.urgent)
 
                 MouseArea {
                   anchors.fill: parent

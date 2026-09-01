@@ -84,7 +84,7 @@ function goalCaption(steps, goal, stepsPerMinute, now) {
 // końca. Bez niego panel skakał przy każdym kliknięciu w kratkę.
 function pastDayCaption(steps, goal) {
   if (steps <= 0) return "bez marszu"
-  if (steps >= goal) return "cel osiągnięty — " + Math.round(steps / goal * 100) + "% dziennej normy"
+  if (steps >= goal) return "cel osiągnięty (" + Math.round(steps / goal * 100) + "%)"
   return "zabrakło " + formatSteps(goal - steps) + " do celu"
 }
 
