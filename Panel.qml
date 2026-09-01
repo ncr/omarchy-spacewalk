@@ -442,9 +442,12 @@ Panel {
 
           Repeater {
             model: [
-              { kind: "speed", label: root.service && root.service.walking ? "prędkość" : "prędkość po starcie",
+              // Podpisy stałe: „prędkość po starcie" nie mieściła się w kafelku
+              // i rozpychała oba. Że wartość dopiero czeka na start, widać po
+              // przygaszeniu i z podpowiedzi.
+              { kind: "speed", label: "prędkość",
                 value: root.shownSpeed.toFixed(1).replace(".", ",") + " km/h" },
-              { kind: "incline", label: root.service && root.service.walking ? "nachylenie" : "nachylenie po starcie",
+              { kind: "incline", label: "nachylenie",
                 value: String(Math.round(root.shownIncline)) }
             ]
 
@@ -463,7 +466,8 @@ Panel {
                 PanelActionButton {
                   anchors.verticalCenter: parent.verticalCenter
                   iconText: "−"
-                  tooltipText: modelData.kind === "speed" ? "wolniej o 0,5 km/h" : "nachylenie w dół"
+                  tooltipText: (modelData.kind === "speed" ? "wolniej o 0,5 km/h" : "nachylenie w dół")
+                               + (root.service && root.service.walking ? "" : " — zadam po starcie")
                   foreground: root.fg
                   enabled: root.service !== null
                   onClicked: modelData.kind === "speed" ? root.bumpSpeed(-0.5) : root.bumpIncline(-1)
@@ -477,6 +481,7 @@ Panel {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: modelData.value
                     color: root.fg
+                    opacity: root.service && root.service.walking ? 1.0 : 0.7
                     font.family: root.family
                     font.pixelSize: Style.font.subtitle
                   }
@@ -490,13 +495,17 @@ Panel {
                     font.pixelSize: Style.font.caption
                     font.capitalization: Font.AllUppercase
                     font.letterSpacing: 0.4
+                    elide: Text.ElideRight
+                    width: Math.min(implicitWidth, tileRow.parent.width - Style.space(56))
+                    horizontalAlignment: Text.AlignHCenter
                   }
                 }
 
                 PanelActionButton {
                   anchors.verticalCenter: parent.verticalCenter
                   iconText: "+"
-                  tooltipText: modelData.kind === "speed" ? "szybciej o 0,5 km/h" : "nachylenie w górę"
+                  tooltipText: (modelData.kind === "speed" ? "szybciej o 0,5 km/h" : "nachylenie w górę")
+                               + (root.service && root.service.walking ? "" : " — zadam po starcie")
                   foreground: root.fg
                   enabled: root.service !== null
                   onClicked: modelData.kind === "speed" ? root.bumpSpeed(0.5) : root.bumpIncline(1)
