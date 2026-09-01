@@ -236,12 +236,15 @@ class DayTotals:
             self.session[f] = value
 
         if deltas.get("steps", 0) <= 0:
-            return
+            return {}
 
+        applied = {}
         for f, delta in deltas.items():
             if delta > 0:
                 self.totals[f] += delta
+                applied[f] = delta
                 self.dirty = True
+        return applied
 
     def new_session(self):
         """Kasuje punkt odniesienia, nie zeruje go: dopiero pierwszy odczyt
@@ -468,22 +471,24 @@ class Bridge:
 
     # ---- sesje (przejścia) do wysłania na telefon
 
-    def track_session(self, sample: dict):
+    def track_session(self, applied: dict):
         """Otwiera przejście przy pierwszym ruchu i zamyka po SESSION_IDLE_GAP
-        sekund bezruchu. Liczniki bieżni są narastające od jej startu, więc
-        wartości szczytowe sesji to po prostu ostatnie niezerowe odczyty."""
-        now = time.monotonic()
-        moving = sample.get("speed", 0) > 0 or sample.get("steps", 0) > self.session_peak.get("steps", 0)
+        sekund bezruchu.
 
-        if moving:
+        Sumuje te same przyrosty, które idą do licznika dnia — nie wskazania
+        bieżni. Wskazania przeżywają restart mostu, więc liczone z nich
+        przejście zapisywało się po każdym restarcie w całości od nowa
+        i kolejka do telefonu puchła od duplikatów.
+        """
+        now = time.monotonic()
+
+        if applied.get("steps", 0) > 0:
             if self.session_started_at is None:
                 self.session_started_at = datetime.now()
                 self.session_peak = {}
             self.session_last_move = now
-            for field in ("steps", "distance_m", "kcal", "elapsed_s"):
-                value = sample.get(field)
-                if value is not None and value >= self.session_peak.get(field, 0):
-                    self.session_peak[field] = value
+            for field, delta in applied.items():
+                self.session_peak[field] = self.session_peak.get(field, 0) + delta
         elif self.session_started_at is not None and now - self.session_last_move > SESSION_IDLE_GAP:
             self.close_session()
 
@@ -542,9 +547,9 @@ class Bridge:
         steps = self.steps_from(sample)
         if steps is not None:
             sample["steps"] = steps
-        self.day.update(sample)
+        applied = self.day.update(sample) or {}
         self.latest = sample
-        self.track_session(sample)
+        self.track_session(applied)
         payload = {"t": "data"}
         payload.update({k: round(v, 2) if isinstance(v, float) else v
                         for k, v in sample.items() if v is not None})
