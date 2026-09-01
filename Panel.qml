@@ -18,7 +18,21 @@ Panel {
 
   readonly property var barIdentity: hostWidget || root
   readonly property int goal: service ? service.dailyGoal : 10000
-  readonly property int steps: service ? service.daySteps : 0
+
+  // Kliknięta kratka podmienia liczby u góry na tamten dzień; pusty klucz to
+  // dziś, czyli stan domyślny.
+  property string selectedDay: ""
+  readonly property string todayKey: service && service.today !== "" ? service.today : Model.dayKey(new Date())
+  readonly property bool showingToday: selectedDay === "" || selectedDay === todayKey
+  readonly property var selectedRecord: {
+    if (showingToday || !service || !service.history) return null
+    return service.history[selectedDay] || { steps: 0, distance_m: 0, kcal: 0, elapsed_s: 0 }
+  }
+
+  readonly property int steps: selectedRecord ? selectedRecord.steps : (service ? service.daySteps : 0)
+  readonly property int shownKcal: selectedRecord ? selectedRecord.kcal : (service ? service.dayKcal : 0)
+  readonly property int shownElapsed: selectedRecord ? selectedRecord.elapsed_s : (service ? service.dayElapsedS : 0)
+  readonly property int shownDistance: selectedRecord ? selectedRecord.distance_m : (service ? service.dayDistanceM : 0)
   readonly property real progress: Model.progress(steps, goal)
   readonly property color fg: bar ? bar.foreground : Color.foreground
   readonly property string family: bar ? bar.fontFamily : Style.font.family
@@ -84,6 +98,33 @@ Panel {
     if (!service || problemLabel !== "") return []
     if (service.walking) return walkingPhrases
     return service.paused ? pausedPhrases : idlePhrases
+  }
+
+  readonly property int gridWeeks: 13
+  readonly property var gridModel: service && opened
+    ? Model.gridDays(service.history, new Date(), gridWeeks) : []
+  readonly property bool hasHistory: service && service.history
+    ? Object.keys(service.history).length > 0 : false
+  readonly property int streakDays: service ? Model.streak(service.history, goal, new Date()) : 0
+  readonly property int bestSteps: service ? Model.bestDay(service.history) : 0
+  readonly property int avgSteps: service ? Model.averageSteps(service.history, new Date(), 30) : 0
+
+  property var hoveredDay: null
+  readonly property string hoveredLabel: hoveredDay
+    ? Model.formatSteps(hoveredDay.steps) + " · " + Model.formatDay(hoveredDay.date)
+    : (hasHistory ? Model.formatSteps(avgSteps) + " śr." : "")
+
+  // Kolory kratki z motywu: cztery stopnie wypełnienia liczone od koloru tekstu,
+  // a dzień z osiągniętym celem dostaje akcent, żeby odcinał się od reszty.
+  function levelColor(level) {
+    var base = bar ? bar.foreground : Color.foreground
+    switch (level) {
+      case 0: return Util.alpha(base, 0.10)
+      case 1: return Util.alpha(base, 0.28)
+      case 2: return Util.alpha(base, 0.48)
+      case 3: return Util.alpha(base, 0.70)
+      default: return Color.accent
+    }
   }
 
   property int phraseIndex: 0
@@ -200,6 +241,13 @@ Panel {
           width: parent.width
           spacing: Style.space(2)
 
+          // Podglądasz inny dzień? Kliknięcie w liczbę wraca do dzisiejszej.
+          MouseArea {
+            anchors.fill: parent
+            enabled: !root.showingToday
+            onClicked: root.selectedDay = ""
+          }
+
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
             text: Model.formatSteps(root.steps)
@@ -211,7 +259,9 @@ Panel {
 
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: "kroków z " + Model.formatSteps(root.goal)
+            text: root.showingToday
+                  ? "kroków z " + Model.formatSteps(root.goal)
+                  : "kroków — " + Model.formatDay(Model.parseKey(root.selectedDay)) + " · kliknij, by wrócić do dziś"
             color: root.fg
             opacity: 0.6
             font.family: root.family
@@ -242,6 +292,7 @@ Panel {
 
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
+            visible: root.showingToday
             text: root.caption
             color: root.fg
             opacity: 0.7
@@ -257,9 +308,9 @@ Panel {
 
           Repeater {
             model: [
-              { label: "kalorie", value: (root.service ? root.service.dayKcal : 0) + " kcal" },
-              { label: "czas", value: Model.formatDuration(root.service ? root.service.dayElapsedS : 0) },
-              { label: "dystans", value: Model.formatDistance(root.service ? root.service.dayDistanceM : 0) }
+              { label: "kalorie", value: root.shownKcal + " kcal" },
+              { label: "czas", value: Model.formatDuration(root.shownElapsed) },
+              { label: "dystans", value: Model.formatDistance(root.shownDistance) }
             ]
             Column {
               required property var modelData
@@ -280,6 +331,116 @@ Panel {
                 font.pixelSize: Style.font.caption
               }
             }
+          }
+        }
+
+
+        PanelSeparator { width: parent.width }
+
+        // ---- kratka ostatnich 13 tygodni
+        Column {
+          width: parent.width
+          spacing: Style.space(6)
+
+          Item {
+            width: parent.width - Style.space(32)
+            x: Style.space(16)
+            height: gridHead.implicitHeight
+
+            Text {
+              id: gridHead
+              anchors.left: parent.left
+              text: "ostatnie 13 tygodni"
+              color: root.fg
+              opacity: 0.55
+              font.family: root.family
+              font.pixelSize: Style.font.caption
+            }
+
+            Text {
+              anchors.right: parent.right
+              text: root.hoveredLabel
+              color: root.fg
+              opacity: 0.75
+              font.family: root.family
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          Grid {
+            id: dayGrid
+            anchors.horizontalCenter: parent.horizontalCenter
+            rows: 7
+            columns: root.gridWeeks
+            flow: Grid.TopToBottom
+            spacing: Style.space(3)
+
+            Repeater {
+              model: root.gridModel
+
+              Rectangle {
+                required property var modelData
+                width: Style.space(13)
+                height: width
+                radius: Style.space(3)
+                opacity: modelData.future ? 0.25 : 1.0
+                color: root.levelColor(Model.dayLevel(modelData.steps, root.goal))
+                border.width: modelData.key === root.todayKey ? 1 : 0
+                border.color: root.bar ? root.bar.urgent : Color.urgent
+
+                MouseArea {
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  onEntered: root.hoveredDay = modelData
+                  onExited: if (root.hoveredDay === modelData) root.hoveredDay = null
+                  onClicked: root.selectedDay = (root.selectedDay === modelData.key) ? "" : modelData.key
+                }
+              }
+            }
+          }
+
+          // passa, rekord, średnia — trzy liczby, które mówią, co z tej kratki wynika
+          Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Style.space(24)
+            visible: root.hasHistory
+
+            Repeater {
+              model: [
+                { label: "passa", value: root.streakDays + (root.streakDays === 1 ? " dzień" : " dni") },
+                { label: "najlepszy", value: Model.formatSteps(root.bestSteps) },
+                { label: "średnia 30 dni", value: Model.formatSteps(root.avgSteps) }
+              ]
+              Column {
+                required property var modelData
+                spacing: Style.space(1)
+                Text {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  text: modelData.value
+                  color: root.fg
+                  font.family: root.family
+                  font.pixelSize: Style.font.bodySmall
+                }
+                Text {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  text: modelData.label
+                  color: root.fg
+                  opacity: 0.5
+                  font.family: root.family
+                  font.pixelSize: Style.font.caption
+                }
+              }
+            }
+          }
+
+          Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            visible: !root.hasHistory
+            text: "historia buduje się od pierwszego marszu"
+            color: root.fg
+            opacity: 0.5
+            font.family: root.family
+            font.pixelSize: Style.font.caption
           }
         }
 

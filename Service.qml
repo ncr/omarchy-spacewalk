@@ -23,6 +23,7 @@ Item {
 
   // Stan czytany przez widget i panel.
   // Nie „state": to wbudowana właściwość Item i własny mechanizm stanów Qt.
+  property string today: ""
   property string linkState: "starting"  // starting | scanning | connecting | connected | disconnected | not_found
   property bool connected: linkState === "connected"
   property real speed: 0
@@ -46,6 +47,10 @@ Item {
   // running | paused | stopped. Pauza znaczy, że zszedłeś z taśmy i można
   // wznowić; stop, że bieżnia stanęła na komendę albo wyłącznikiem.
   property string beltState: "stopped"
+  // Sumy z ostatnich dni: {"2026-09-01": {steps, distance_m, kcal, elapsed_s}}.
+  // Most czyta katalog raz przy starcie, więc kratka nie chodzi po dysku przy
+  // każdym otwarciu panelu.
+  property var history: ({})
   readonly property bool paused: beltState === "paused"
 
   Timer {
@@ -144,6 +149,8 @@ Item {
       phaseText = msg.text || ""
       // Komunikat o jadącej taśmie sam znika — reszta zostaje, bo opisuje stan.
       if (phaseName === "running") phaseClear.restart()
+    } else if (msg.t === "history") {
+      history = msg.days || ({})
     } else if (msg.t === "belt") {
       beltState = msg.state || "stopped"
     } else if (msg.t === "targets") {
@@ -172,6 +179,17 @@ Item {
     if (msg.day_distance_m !== undefined) dayDistanceM = msg.day_distance_m
     if (msg.day_kcal !== undefined) dayKcal = msg.day_kcal
     if (msg.day_elapsed_s !== undefined) dayElapsedS = msg.day_elapsed_s
+
+    // Kratka rysuje się z historii, a dzisiejszy dzień zmienia się co sekundę —
+    // podmieniamy go na bieżąco, zamiast czekać na kolejny odczyt katalogu.
+    if (msg.day !== undefined) {
+      var next = ({})
+      for (var k in history) next[k] = history[k]
+      next[msg.day] = { steps: daySteps, distance_m: dayDistanceM,
+                        kcal: dayKcal, elapsed_s: dayElapsedS }
+      history = next
+      today = msg.day
+    }
   }
 
   // Uruchamiany dopiero po zbudowaniu obiektu: przy `running: true` wpisanym

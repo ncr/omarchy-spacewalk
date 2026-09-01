@@ -24,7 +24,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from bleak import BleakClient, BleakScanner
@@ -203,6 +203,7 @@ class DayTotals:
         self.totals = {f: 0.0 for f in self.FIELDS}
         self.session = {f: None for f in self.FIELDS}
         self.load()
+        emit({"t": "history", "days": read_history()})
 
     def update(self, sample: dict):
         """Przyjmuje wartości narastające od początku sesji i dolicza różnicę.
@@ -255,6 +256,32 @@ class DayTotals:
             "day_kcal": int(self.totals["kcal"]),
             "day_elapsed_s": int(self.totals["elapsed_s"]),
         }
+
+
+# ------------------------------------------------------------------- historia
+
+HISTORY_DAYS = 120
+
+
+def read_history(days: int = HISTORY_DAYS) -> dict:
+    """Sumy z ostatnich dni, prosto z plików dnia. Panel rysuje z tego kratkę,
+    więc czytamy katalog raz przy starcie, nie przy każdym otwarciu panelu."""
+    out = {}
+    today = date.today()
+    for offset in range(days):
+        day = today - timedelta(days=offset)
+        path = STATE_DIR / f"{day.isoformat()}.json"
+        try:
+            raw = json.loads(path.read_text())
+        except (FileNotFoundError, ValueError, OSError):
+            continue
+        out[day.isoformat()] = {
+            "steps": int(float(raw.get("steps", 0))),
+            "distance_m": int(float(raw.get("distance_m", 0))),
+            "kcal": int(float(raw.get("kcal", 0))),
+            "elapsed_s": int(float(raw.get("elapsed_s", 0))),
+        }
+    return out
 
 
 # --------------------------------------------------------- serwer dla telefonu
@@ -811,6 +838,7 @@ class Bridge:
 
     async def run(self):
         emit({"t": "data", **self.day.snapshot()})
+        emit({"t": "history", "days": read_history()})
         self.publish_targets()
         stdin_task = asyncio.create_task(self.stdin_loop())
         conn_task = asyncio.create_task(self.connection_loop())
