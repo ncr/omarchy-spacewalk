@@ -101,6 +101,16 @@ zejścia z taśmy.
 Ustawienie `strideMeters` > 0 przełącza na liczenie z dystansu — zapas na wypadek innej
 bieżni, przy tej niepotrzebny.
 
+## Historia sprzed pluginu
+
+Dni od 30 czerwca do 31 sierpnia 2026 pochodzą z eksportu Apple Health — appka UREVO
+zapisywała tam kroki, dystans i kalorie z bieżni, po jednym rekordzie na dzień z przedziałem
+czasu. Te pliki mają `"source": "urevo-health"`; czas marszu jest w nich długością przedziału,
+jaki zapisała appka, więc zawiera przerwy i jest odrobinę dłuższy niż czas ruchu taśmy.
+
+31 sierpnia ma sumę obu źródeł: appka chodziła rano (10 015 kroków, 8:26–10:39), plugin
+zapisał popołudniowy test (39 kroków), przejścia się nie nakładają.
+
 ## Bieżnia zasypia
 
 Bieżnia rozgłasza się tylko przez chwilę po włączeniu zasilania. Most skanuje bez przerwy

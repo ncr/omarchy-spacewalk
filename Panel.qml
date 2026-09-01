@@ -55,7 +55,11 @@ Panel {
     onTriggered: root.clockNow = new Date()
   }
 
-  readonly property string caption: Model.goalCaption(steps, goal, stepsPerMinute, clockNow)
+  // Ta sama linijka dla dziś i dla podglądanego dnia — schowanie jej przy
+  // kliknięciu w kratkę skracało panel i wszystko pod spodem podskakiwało.
+  readonly property string caption: showingToday
+    ? Model.goalCaption(steps, goal, stepsPerMinute, clockNow)
+    : Model.pastDayCaption(steps, goal)
 
   // Kłopoty opisujemy rzeczowo; dopiero gdy wszystko gra, w tej linii chodzi
   // karuzela (wzorem omaphones).
@@ -292,7 +296,6 @@ Panel {
 
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            visible: root.showingToday
             text: root.caption
             color: root.fg
             opacity: 0.7

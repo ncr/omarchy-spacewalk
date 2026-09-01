@@ -80,6 +80,14 @@ function goalCaption(steps, goal, stepsPerMinute, now) {
   return text + " — koniec ok. " + clock + " (" + Math.round(minutes) + " min)"
 }
 
+// Podpis dla dnia z przeszłości — w miejscu, gdzie dla dzisiaj stoi prognoza
+// końca. Bez niego panel skakał przy każdym kliknięciu w kratkę.
+function pastDayCaption(steps, goal) {
+  if (steps <= 0) return "bez marszu"
+  if (steps >= goal) return "cel osiągnięty — " + Math.round(steps / goal * 100) + "% dziennej normy"
+  return "zabrakło " + formatSteps(goal - steps) + " do celu"
+}
+
 // ---------------------------------------------------------------- kratka dni
 
 // Klucz dnia w formacie plików mostu: "2026-09-01".
