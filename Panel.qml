@@ -19,9 +19,10 @@ Panel {
   readonly property var barIdentity: hostWidget || root
   readonly property int goal: service ? service.dailyGoal : 10000
 
-  // Kliknięta kratka podmienia liczby u góry na tamten dzień; pusty klucz to
-  // dziś, czyli stan domyślny.
-  property string selectedDay: ""
+  // Kratka pod kursorem podmienia liczby u góry na tamten dzień; zjazd z kratek
+  // wraca do dzisiaj. Bez klikania — podglądanie historii to ruch myszy, nie
+  // wybór, który trzeba potem cofać.
+  readonly property string selectedDay: hoveredDay ? hoveredDay.key : ""
   readonly property string todayKey: service && service.today !== "" ? service.today : Model.dayKey(new Date())
   readonly property bool showingToday: selectedDay === "" || selectedDay === todayKey
   readonly property var selectedRecord: {
@@ -115,8 +116,8 @@ Panel {
 
   property var hoveredDay: null
   readonly property string hoveredLabel: hoveredDay
-    ? Model.formatSteps(hoveredDay.steps) + " · " + Model.formatDay(hoveredDay.date)
-    : (hasHistory ? Model.formatSteps(avgSteps) + " śr." : "")
+    ? Model.formatDay(hoveredDay.date)
+    : (hasHistory ? "średnio " + Model.formatSteps(avgSteps) : "")
 
   // Kolory kratki z motywu: cztery stopnie wypełnienia liczone od koloru tekstu,
   // a dzień z osiągniętym celem dostaje akcent, żeby odcinał się od reszty.
@@ -232,15 +233,6 @@ Panel {
       anchors.fill: parent
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
-
-      // Kliknięcie gdziekolwiek poza kratkami i przyciskami wraca do dzisiaj.
-      // Leży pod treścią, więc przyciski i kratki łapią swoje kliknięcia same.
-      MouseArea {
-        anchors.fill: parent
-        z: -1
-        enabled: !root.showingToday
-        onClicked: root.selectedDay = ""
-      }
 
       Column {
         id: column
@@ -406,8 +398,10 @@ Panel {
                   anchors.fill: parent
                   hoverEnabled: true
                   onEntered: root.hoveredDay = modelData
+                  // Tylko własne wyjście: przy przechodzeniu między kratkami
+                  // sygnały się przeplatają i czyszczenie na ślepo gasiłoby
+                  // dzień, który właśnie wszedł pod kursor.
                   onExited: if (root.hoveredDay === modelData) root.hoveredDay = null
-                  onClicked: root.selectedDay = (root.selectedDay === modelData.key) ? "" : modelData.key
                 }
               }
             }
