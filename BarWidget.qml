@@ -122,6 +122,9 @@ BarWidget {
       anchors.top: parent.top
       anchors.topMargin: Style.space(2)
       width: Math.round(button.contentWidth)
+      // Po osiągnięciu celu pasek znika: pełna kreska przez cały wieczór
+      // niczego już nie mówi, a sama liczba mówi wszystko.
+      visible: root.progress < 1
       height: Style.space(2)
       radius: height / 2
       color: root.bar ? Style.selectedFillFor(root.bar.barForeground, Color.accent)
