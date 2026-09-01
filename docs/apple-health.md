@@ -84,15 +84,23 @@ Wpis z adresem telefonu i `200 OK` przy `/pending` znaczy, że sieć i serwer dz
 a problem jest w samym skrócie. Brak wpisu po `/ack-all` znaczy, że skrót zatrzymał się
 w pętli, zanim potwierdził odbiór — najczęściej na dacie albo na braku zgody dla Zdrowia.
 
-## Kiedy to uruchamiać
+## Raz na dobę, samo
 
-W Skrótach → Automatyzacja. Wyzwalacz czasowy (np. 21:00) albo „gdy iPhone łączy się
-z ładowarką". Od iOS 16.4 automatyzacje osobiste mogą chodzić bez pytania o zgodę —
-w ustawieniach automatyzacji wyłącz „Pytaj przed uruchomieniem".
+W Skrótach → zakładka **Automatyzacja** → **+** → **Pora dnia**: godzina, **Codziennie**,
+a na dole **Uruchom natychmiast**. Bez tego ostatniego iOS tylko wyświetla powiadomienie,
+które trzeba kliknąć. Dalej → wybierz skrót. „Powiadamiaj o uruchomieniu" można wyłączyć.
 
-Telefon musi mieć włączony Tailscale i widzieć komputer; komputer musi być włączony.
-Nieodebrane przejścia czekają w kolejce, więc uruchomienie po kilku dniach wyśle
-wszystkie zaległe.
+Godzinę dobierz pod komputer, bo to z niego lecą dane — jeśli wyłączasz go na noc,
+wczesny wieczór jest pewniejszy niż 23:00.
+
+Nieudana próba niczego nie psuje: przejścia zostają w kolejce, dopóki skrót ich nie
+potwierdzi, więc następne uruchomienie zabierze także zaległe. Dlatego warto dodać drugą
+automatyzację jako zapas — na przykład „gdy iPhone podłączony do ładowarki".
+
+Telefon musi mieć włączony Tailscale i **ważny klucz węzła**: gdy klucz wygasa, urządzenie
+nadal widnieje na liście, ale ruch nie przechodzi i skrót kończy się przeterminowaniem.
+Sprawdzenie z komputera: `tailscale ping iphone`. Lekarstwo: zalogować się ponownie
+w aplikacji Tailscale, a na stałe — „Disable key expiry" w panelu admina.
 
 ## Podwójne liczenie
 
