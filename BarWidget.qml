@@ -66,36 +66,86 @@ BarWidget {
     }
   }
 
-  WidgetButton {
+  // Liczba centruje się w pełnej wysokości baru — dokładnie jak napisy
+  // sąsiednich widgetów. Chodzik siedzi obok, na JEJ linii bazowej: trzymany
+  // z cyframi w jednym napisie podnosił je o kilka pikseli, bo glif nerd-fonta
+  // ma inne metryki niż cyfry i centrowanie liczyło jego wysokość.
+  Item {
     id: button
-    bar: root.bar
-    text: root.glyph + " " + Model.formatSteps(root.steps)
-    dimmed: !(root.service && root.service.connected)
-    tooltipText: root.service && root.service.connected
-                 ? "" : "bieżnia nieosiągalna — pstryknij wyłącznikiem"
+    // Bez anchors.fill: przy pierwszym rysowaniu rodzic nie ma jeszcze wymiaru,
+    // widget wychodzi zerowy, a shell wykreśla taki z układu baru.
+    width: implicitWidth
+    height: implicitHeight
+    implicitWidth: icon.implicitWidth + Style.space(6) + number.implicitWidth + Style.space(17)
+    implicitHeight: root.bar ? root.bar.barSize : Style.space(24)
 
-    onPressed: function(b) {
-      if (!root.service) return
-      if (b === Qt.MiddleButton) {
-        if (root.service.walking) root.service.stop()
-        else root.service.start()
-      } else {
-        root.togglePanel()
+    readonly property real glyphSlot: (icon.implicitWidth + Style.space(6)) / 2
+
+    Text {
+      id: number
+      anchors.centerIn: parent
+      anchors.horizontalCenterOffset: button.glyphSlot
+      // Bar nie trzyma jednej linii — wbudowany zegar siedzi o piksel niżej niż
+      // geometryczny środek slotu. Równamy do niego, bo to on wyznacza rytm baru.
+      anchors.verticalCenterOffset: 1
+      text: Model.formatSteps(root.steps)
+      color: root.bar ? root.bar.barForeground : Color.foreground
+      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+      font.pixelSize: Style.font.body
+      renderType: Text.NativeRendering
+      opacity: root.service && root.service.connected ? 1.0 : 0.45
+    }
+
+    Text {
+      id: icon
+      anchors.baseline: number.baseline
+      anchors.right: number.left
+      anchors.rightMargin: Style.space(6)
+      text: root.glyph
+      color: number.color
+      font.family: number.font.family
+      font.pixelSize: Style.font.body + 2
+      renderType: Text.NativeRendering
+      opacity: number.opacity
+    }
+
+    // Postęp do celu, pod liczbą. Ścieżka bierze kolor stąd, co ścieżki suwaków
+    // w panelach Omarchy, więc chodzi za motywem zamiast być na sztywno czarna.
+    Rectangle {
+      anchors.horizontalCenter: number.horizontalCenter
+      // Do dołu pigułki, nie pod sam tekst: pod tekstem wychodził poza widget
+      // i bar go ucinał.
+      anchors.bottom: parent.bottom
+      anchors.bottomMargin: Style.space(4)
+      width: Math.round(number.implicitWidth)
+      height: Style.space(2)
+      radius: height / 2
+      color: root.bar ? Style.selectedFillFor(root.bar.barForeground, Color.accent)
+                      : Style.selectedFill
+
+      Rectangle {
+        anchors.left: parent.left
+        width: Math.round(parent.width * root.progress)
+        height: parent.height
+        radius: parent.radius
+        color: root.progress >= 1 ? (root.bar ? root.bar.urgent : Color.urgent)
+                                  : (root.bar ? root.bar.barForeground : Color.foreground)
       }
     }
 
-    // Postęp do celu: sama wypełniona część, bez ścieżki pod spodem — pusta
-    // ścieżka na całej szerokości czytała się jak podkreślenie pigułki.
-    Rectangle {
-      anchors.horizontalCenter: parent.horizontalCenter
-      anchors.bottom: parent.bottom
-      anchors.bottomMargin: Style.space(5)
-      width: Math.round(button.labelWidth * root.progress)
-      height: Style.space(2)
-      radius: height / 2
-      visible: root.progress > 0
-      color: root.progress >= 1 ? (root.bar ? root.bar.urgent : Color.urgent)
-                                : (root.bar ? root.bar.barForeground : Color.foreground)
+    MouseArea {
+      anchors.fill: parent
+      acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+      hoverEnabled: true
+      onClicked: function(mouse) {
+        if (!root.service) return
+        if (mouse.button === Qt.MiddleButton) {
+          if (root.service.walking) root.service.stop()
+          else root.service.start()
+        } else {
+          root.togglePanel()
+        }
+      }
     }
   }
 }
