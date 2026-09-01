@@ -76,33 +76,15 @@ Panel {
     }
   }
 
-  readonly property var walkingPhrases: [
-    "Idziesz.",
-    "Nogi robią swoje",
-    "Biurko stoi, ty nie",
-    "Krok po kroku do dziesiątki",
-    "Taśma pod kontrolą",
-    "Dziś nogi zarabiają na siedzenie"
-  ]
-
-  readonly property var pausedPhrases: [
-    "Spauzowana — zszedłeś z taśmy",
-    "Taśma czeka",
-    "Wróć, licznik stoi",
-    "Przerwa. Krótka, prawda?"
-  ]
-
-  readonly property var idlePhrases: [
-    "Bieżnia gotowa",
-    "Taśma czeka na Start",
-    "Zero kroków samo nie urośnie",
-    "Nachylenie ustawione, reszta należy do Ciebie"
-  ]
-
-  readonly property var phrases: {
-    if (!service || problemLabel !== "") return []
-    if (service.walking) return walkingPhrases
-    return service.paused ? pausedPhrases : idlePhrases
+  // Podtytuł nagłówka: kłopot, jeśli jest, inaczej to, co taśma właśnie robi.
+  readonly property string heroMeta: {
+    if (problemLabel !== "") return problemLabel
+    if (!service) return ""
+    if (service.walking)
+      return shownSpeed.toFixed(1).replace(".", ",") + " km/h · nachylenie "
+             + Math.round(shownIncline)
+    if (service.paused) return "zszedłeś z taśmy — przełącz, żeby wrócić"
+    return "gotowa · " + shownSpeed.toFixed(1).replace(".", ",") + " km/h po starcie"
   }
 
   readonly property int gridWeeks: 13
@@ -132,39 +114,16 @@ Panel {
     }
   }
 
-  property int phraseIndex: 0
-  readonly property bool rotating: opened && phrases.length > 1
-  readonly property string stateLabel: problemLabel !== ""
-    ? problemLabel
-    : (phrases.length > 0 ? phrases[phraseIndex % phrases.length] : "")
-
-  // Nowy zestaw fraz zaczyna się od pierwszej, żeby zmiana stanu od razu mówiła,
-  // co się stało, zamiast wpadać w środek poprzedniej karuzeli.
-  onPhrasesChanged: phraseIndex = 0
-
-  Timer {
-    interval: 2800
-    running: root.rotating
-    repeat: true
-    onTriggered: phraseSwap.restart()
+  // Przełącznik w nagłówku zastąpił przycisk na dole: rusza taśmę i ją zatrzymuje.
+  // Bieżnia sama wstrzymuje taśmę, gdy z niej zejdziesz, a start ją wtedy wznawia.
+  function toggleBelt() {
+    if (!service) return
+    if (service.walking) service.stop()
+    else service.start()
   }
 
-  SequentialAnimation {
-    id: phraseSwap
-    PropertyAnimation {
-      target: stateText; property: "opacity"
-      to: 0.0; duration: 180; easing.type: Easing.OutQuad
-    }
-    ScriptAction { script: root.phraseIndex = root.phraseIndex + 1 }
-    PropertyAnimation {
-      target: stateText; property: "opacity"
-      to: 0.55; duration: 220; easing.type: Easing.InQuad
-    }
-  }
-
-  // Tylko Start i Zatrzymaj. Bieżnia sama wstrzymuje taśmę, gdy z niej zejdziesz,
-  // a Start ją wtedy wznawia — osobny przycisk pauzy niczego nie dokładał.
-  readonly property string mainButtonLabel: service && service.walking ? "Zatrzymaj" : "Start"
+  readonly property bool beltBusy: service
+    && ["sending", "control", "starting", "unconfirmed", "spinup", "setting"].indexOf(service.phaseName) !== -1
 
   function open() {
     openedFromHotkey = false
@@ -236,6 +195,53 @@ Panel {
         spacing: Style.space(14)
         topPadding: Style.space(16)
         bottomPadding: Style.space(16)
+
+        // ---- nagłówek: co robi bieżnia i przełącznik, który ją rusza
+        Item {
+          id: header
+          width: parent.width - Style.space(32)
+          x: Style.space(16)
+          implicitHeight: hero.implicitHeight
+
+          PanelHero {
+            id: hero
+            width: parent.width
+            title: "SpaceWalk"
+            meta: root.heroMeta
+            foreground: root.fg
+            fontFamily: root.family
+            iconOpacity: root.service && root.service.connected ? 1.0 : 0.5
+
+            iconComponent: Component {
+              Text {
+                text: "󰖃"
+                color: root.fg
+                font.family: root.family
+                font.pixelSize: Style.font.display
+              }
+            }
+
+            // Dwie pozycje zamiast przycisku na dole: taśma jedzie albo stoi.
+            trailingControl: Component {
+              ToggleSwitch {
+                id: beltSwitch
+                checked: root.service ? root.service.walking : false
+                busy: root.beltBusy
+                interactive: root.service && root.service.connected
+                foreground: root.fg
+                onToggled: root.toggleBelt()
+
+                PanelToolTip {
+                  visible: beltSwitch.containsMouse
+                  text: root.service && root.service.walking
+                        ? "zatrzymuje taśmę; licznik dnia zostaje"
+                        : "rusza z ustawioną prędkością i nachyleniem"
+                  fontFamily: root.family
+                }
+              }
+            }
+          }
+        }
 
         // ---- kroki: główna liczba
         Column {
@@ -549,31 +555,6 @@ Panel {
           }
         }
 
-        // ---- start / stop
-        Row {
-          anchors.horizontalCenter: parent.horizontalCenter
-          spacing: Style.space(10)
-
-          Button {
-            text: root.mainButtonLabel
-            enabled: root.service && root.service.connected
-            tooltipText: root.service && root.service.walking
-                         ? "zatrzymuje taśmę; licznik dnia zostaje"
-                         : "rusza z ustawioną prędkością i nachyleniem"
-            foreground: root.fg
-            fontFamily: root.family
-            bordered: true
-            // Wyróżniony wypełnieniem — to on jest tym, po co się tu przychodzi.
-            selected: true
-            horizontalPadding: Style.spacing.controlPaddingX + Style.space(6)
-            onClicked: {
-              if (!root.service) return
-              if (root.service.walking) root.service.stop()
-              else root.service.start()   // start wznawia też taśmę wstrzymaną
-            }
-          }
-        }
-
         // ---- co się właśnie dzieje ze startem
         //
         // Zawsze zajmuje swój wiersz, choćby pusty, i nigdy się nie zawija:
@@ -596,23 +577,6 @@ Panel {
           elide: Text.ElideRight
         }
 
-        // ---- stan połączenia
-        Text {
-          id: stateText
-          anchors.horizontalCenter: parent.horizontalCenter
-          text: root.stateLabel + (root.service && root.service.lastError !== ""
-                                   ? " — " + root.service.lastError : "")
-          color: root.fg
-          opacity: 0.5
-          font.family: root.family
-          font.pixelSize: Style.font.caption
-          width: parent.width - Style.space(32)
-          height: Math.round(Style.font.caption * 1.7)
-          horizontalAlignment: Text.AlignHCenter
-          verticalAlignment: Text.AlignVCenter
-          wrapMode: Text.NoWrap
-          elide: Text.ElideRight
-        }
       }
     }
   }
