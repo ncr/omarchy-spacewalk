@@ -246,11 +246,11 @@ Panel {
       root.bar.centerHoverRevealSuppressed = value
   }
 
-  // Gdy taśma jedzie, pokazujemy jej odczyt; gdy stoi — to, co zostanie zadane
-  // po starcie. Stojąca bieżnia raportuje zera i nie przyjmuje komend, więc
-  // odczyt byłby mylący.
-  readonly property real shownSpeed: service ? (service.walking ? service.speed : service.targetSpeed) : 0
-  readonly property real shownIncline: service ? (service.walking ? service.incline : service.targetIncline) : 0
+  // Kafelki pokazują wartość ZADANĄ, nie chwilowy odczyt. Strzałki zmieniają
+  // właśnie ją, a bieżnia po drodze rozpędza się i hamuje: schodząc z taśmy
+  // widziało się 1 km/h w połowie hamowania, choć zadane były 2,5.
+  readonly property real shownSpeed: service ? service.targetSpeed : 0
+  readonly property real shownIncline: service ? service.targetIncline : 0
 
   function bumpSpeed(delta) {
     if (!service) return
