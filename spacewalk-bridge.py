@@ -620,10 +620,18 @@ class Bridge:
         return speed_ok and incline_ok
 
     async def apply_targets(self):
-        """Dosyła prędkość i nachylenie po starcie, aż bieżnia je pokaże."""
+        """Dosyła prędkość i nachylenie po starcie, aż bieżnia je pokaże.
+
+        Rytm dobrany na sprzęcie: pierwsza próba dopiero po 9 s, bo komenda
+        wysłana wcześniej ginie bez odpowiedzi — bieżnia rozpędza się do 1 km/h
+        i dopiero wtedy słucha. Kolejne co 3 s, z krótkim czekaniem na
+        potwierdzenie: brak odpowiedzi znaczy „zignorowane", więc nie ma po co
+        czekać pełnych 10 s jak przy starcie.
+        """
         self.phase("spinup", "taśma rusza, czekam aż się rozpędzi")
-        for attempt in range(5):
-            await asyncio.sleep(6.0)
+        await asyncio.sleep(6.0)
+        for attempt in range(10):
+            await asyncio.sleep(3.0)
             if not self.client or not self.client.is_connected:
                 self.phase("error", "rozłączyło bieżnię")
                 return
@@ -638,11 +646,13 @@ class Bridge:
             if self.target_speed is not None and abs(self.latest.get("speed", 0) - self.target_speed) >= 0.05:
                 self.phase("setting", f"zadaję {self.target_speed:.1f} km/h".replace(".", ","))
                 await self.send_command(OP_SET_SPEED,
-                                        round(self.target_speed * 100).to_bytes(2, "little"))
+                                        round(self.target_speed * 100).to_bytes(2, "little"),
+                                        timeout=4.0)
             if self.target_incline is not None and abs(self.latest.get("incline", 0) - self.target_incline) >= 0.05:
                 self.phase("setting", f"zadaję nachylenie {round(self.target_incline)}")
                 await self.send_command(OP_SET_INCLINATION,
-                                        round(self.target_incline * 10).to_bytes(2, "little", signed=True))
+                                        round(self.target_incline * 10).to_bytes(2, "little", signed=True),
+                                        timeout=4.0)
         self.phase("running" if self.targets_reached() else "partial", self.running_text())
 
     def running_text(self) -> str:
