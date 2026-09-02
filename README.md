@@ -1,10 +1,11 @@
 # Spacewalk
 
-Walk while you work, without the vendor app. Spacewalk drives a **Urevo
-SpaceWalk 3S** walking pad from the [Omarchy](https://omarchy.org) bar: today's
-steps with a progress bar toward your daily goal in the bar, and a panel with
-calories, time, distance, an estimated goal time, a day-by-day history grid,
-and speed / incline / belt control.
+This drives my treadmill — a **Urevo SpaceWalk 3S** walking pad under my
+desk — from the [Omarchy](https://omarchy.org) bar, in place of the vendor's
+phone app. Written for my own setup, in the malleable computing spirit: a few
+files I can read and change. The bar shows today's steps with a progress bar
+toward the daily goal; the panel adds calories, time, distance, an estimated
+goal time, a day-by-day history grid, and speed / incline / belt control.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.webp">
@@ -28,9 +29,6 @@ of those instead:
 as well as FTMS, so it covers the A1/C1/C2/R1/S1 generation too) and
 [shllg/omarchy-walkingpad-control](https://github.com/shllg/omarchy-walkingpad-control)
 (belt control with charts and a history browser, measured against a C2).
-
-If you have some other FTMS pad and it works — or nearly works — open an
-issue and say which one; that's how the list above grows.
 
 ## Requirements
 
