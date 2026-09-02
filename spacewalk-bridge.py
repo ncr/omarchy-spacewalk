@@ -62,6 +62,7 @@ RESULT_NAMES = {
 
 LOG_PATH = STATE_DIR / "bridge.log"
 SESSIONS_PATH = STATE_DIR / "sessions.jsonl"
+OPEN_SESSION_PATH = STATE_DIR / "session-open.json"
 
 # After this many seconds without movement the walk counts as finished. The
 # treadmill stops itself when nobody is standing on it, so a short break to fix
@@ -465,6 +466,7 @@ class Bridge:
         self.target_incline: float | None = None
         self.session_started_at: datetime | None = None
         self.session_last_move: float = 0.0
+        self.session_last_move_wall: datetime | None = None
         self.session_peak: dict = {}
         self.server: PhoneServer | None = None
         # running | paused | stopped — pause means stepping off the belt, stop
@@ -494,6 +496,7 @@ class Bridge:
                 self.session_started_at = datetime.now()
                 self.session_peak = {}
             self.session_last_move = now
+            self.session_last_move_wall = datetime.now()
             for field, delta in applied.items():
                 self.session_peak[field] = self.session_peak.get(field, 0) + delta
         elif self.session_started_at is not None and now - self.session_last_move > SESSION_IDLE_GAP:
@@ -506,6 +509,10 @@ class Bridge:
         started = self.session_started_at
         self.session_started_at = None
         self.session_peak = {}
+        try:
+            OPEN_SESSION_PATH.unlink()
+        except OSError:
+            pass
         if peak.get("steps", 0) <= 0:
             return  # the belt spun with nobody on it — nothing worth recording
         record = {
@@ -518,6 +525,9 @@ class Bridge:
             "elapsed_s": int(peak.get("elapsed_s", 0)),
             "sent": False,
         }
+        self.append_session(record)
+
+    def append_session(self, record: dict):
         try:
             STATE_DIR.mkdir(parents=True, exist_ok=True)
             with SESSIONS_PATH.open("a") as fh:
@@ -525,6 +535,56 @@ class Bridge:
         except OSError as exc:
             error(f"cannot save the session: {exc}")
         emit({"t": "session", **record})
+
+    def persist_open_session(self):
+        """Mirrors the walk in progress to disk. The shell kills the bridge on
+        every plugin reload, and a walk held only in memory died with it: the
+        steps stayed on the bar (the daily counter is saved every 30 s) but
+        never reached the phone."""
+        if self.session_started_at is None:
+            return
+        payload = {
+            "start": self.session_started_at.isoformat(timespec="seconds"),
+            "last_move": (self.session_last_move_wall or datetime.now()).isoformat(timespec="seconds"),
+            "peak": self.session_peak,
+        }
+        try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            tmp = OPEN_SESSION_PATH.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(payload))
+            tmp.replace(OPEN_SESSION_PATH)
+        except OSError as exc:
+            error(f"cannot save the open session: {exc}")
+
+    def recover_open_session(self):
+        """A leftover open-session file means the previous bridge died
+        mid-walk. Close that walk as of its last recorded movement and queue
+        it for the phone."""
+        try:
+            raw = json.loads(OPEN_SESSION_PATH.read_text())
+        except FileNotFoundError:
+            return
+        except (ValueError, OSError) as exc:
+            error(f"cannot read {OPEN_SESSION_PATH}: {exc}")
+            return
+        try:
+            OPEN_SESSION_PATH.unlink()
+        except OSError:
+            pass
+        peak = raw.get("peak") or {}
+        start = raw.get("start") or ""
+        if peak.get("steps", 0) <= 0 or not start:
+            return
+        self.append_session({
+            "id": start.replace("-", "").replace(":", ""),
+            "start": start,
+            "end": raw.get("last_move") or start,
+            "steps": int(peak.get("steps", 0)),
+            "distance_m": int(peak.get("distance_m", 0)),
+            "kcal": int(peak.get("kcal", 0)),
+            "elapsed_s": int(peak.get("elapsed_s", 0)),
+            "sent": False,
+        })
 
     def publish_targets(self):
         """Targets kept apart from readings: when the belt stands still the
@@ -860,8 +920,10 @@ class Bridge:
             await asyncio.sleep(30)
             self.day.roll_over_if_needed()
             self.day.save()
+            self.persist_open_session()
 
     async def run(self):
+        self.recover_open_session()
         emit({"t": "data", **self.day.snapshot()})
         emit({"t": "history", "days": read_history()})
         self.publish_targets()
@@ -879,6 +941,7 @@ class Bridge:
         save_task.cancel()
         for task in pending:
             task.cancel()
+        self.close_session()
         self.day.save()
 
 
