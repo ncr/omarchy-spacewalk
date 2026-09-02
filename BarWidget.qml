@@ -3,8 +3,8 @@ import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 
-// Pigułka na barze: cienki pasek postępu do celu, a pod nim chodzik i kroki
-// dnia. Klik otwiera panel; klik środkowym startuje albo zatrzymuje taśmę.
+// Pill on the bar: a thin progress bar toward the goal, and under it the walker
+// and the day's steps. Click opens the panel; middle click starts or stops the belt.
 BarWidget {
   id: root
   moduleName: "io.github.ncr.spacewalk"
@@ -13,9 +13,9 @@ BarWidget {
   readonly property int goal: service ? service.dailyGoal : 10000
   readonly property int steps: service ? service.daySteps : 0
   readonly property real progress: Model.progress(steps, goal)
-  // Jeden stały chodzik. Drugi glif na czas marszu odpadł: w tej czcionce nie
-  // ma postaci biegacza i wychodził z niego obcy znaczek. Co robi bieżnia,
-  // widać w panelu.
+  // One fixed walker. A second glyph for while walking was dropped: this font
+  // has no runner shape and it came out as an alien mark. What the treadmill is
+  // doing shows in the panel.
   readonly property string glyph: "󰖃"
 
   function injectPanel() {
@@ -46,9 +46,9 @@ BarWidget {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  // Szerokość kreski, którą bar rysuje pod widgetem z otwartym panelem. Bez tej
-  // podpowiedzi bar bierze 55% szerokości slotu (Bar.qml:1575) i wychodzi krótki
-  // kikut; oficjalne widgety podają tu szerokość swojej treści, tak jak zegar.
+  // Width of the line the bar draws under the widget whose panel is open. Without
+  // this hint the bar takes 55% of the slot width (Bar.qml:1575) and a short stub
+  // comes out; official widgets report their content width here, like the clock.
   readonly property real openPanelIndicatorWidth: button.contentWidth
 
   onBarChanged: { injectPanel(); pushSettings() }
@@ -66,30 +66,30 @@ BarWidget {
     }
   }
 
-  // Liczba centruje się w pełnej wysokości baru — dokładnie jak napisy
-  // sąsiednich widgetów. Chodzik siedzi obok, na JEJ linii bazowej: trzymany
-  // z cyframi w jednym napisie podnosił je o kilka pikseli, bo glif nerd-fonta
-  // ma inne metryki niż cyfry i centrowanie liczyło jego wysokość.
+  // The number centers within the bar's full height — exactly like the labels of
+  // neighboring widgets. The walker sits beside it, on ITS baseline: kept in one
+  // string with the digits it lifted them a few pixels, because the nerd-font
+  // glyph has different metrics than the digits and centering counted its height.
   Item {
     id: button
-    // Bez anchors.fill: przy pierwszym rysowaniu rodzic nie ma jeszcze wymiaru,
-    // widget wychodzi zerowy, a shell wykreśla taki z układu baru.
+    // No anchors.fill: on the first paint the parent has no size yet, the widget
+    // comes out zero, and the shell strikes such a widget from the bar layout.
     width: implicitWidth
     height: implicitHeight
     implicitWidth: icon.implicitWidth + Style.space(6) + number.implicitWidth + Style.space(17)
     implicitHeight: root.bar ? root.bar.barSize : Style.space(24)
 
     readonly property real glyphSlot: (icon.implicitWidth + Style.space(6)) / 2
-    // Chodzik z liczbą, bez marginesów — tyle mierzy pasek postępu i tyle samo
-    // kreska otwartego panelu.
+    // Walker plus number, no margins — that is how wide the progress bar is,
+    // and the open-panel line the same.
     readonly property real contentWidth: icon.implicitWidth + Style.space(6) + number.implicitWidth
 
     Text {
       id: number
       anchors.centerIn: parent
       anchors.horizontalCenterOffset: button.glyphSlot
-      // Bar nie trzyma jednej linii — wbudowany zegar siedzi o piksel niżej niż
-      // geometryczny środek slotu. Równamy do niego, bo to on wyznacza rytm baru.
+      // The bar holds no single line — the built-in clock sits a pixel below the
+      // geometric center of the slot. We align to it: it sets the bar's rhythm.
       anchors.verticalCenterOffset: 1
       text: Model.formatSteps(root.steps)
       color: root.bar ? root.bar.barForeground : Color.foreground
@@ -106,24 +106,24 @@ BarWidget {
       anchors.rightMargin: Style.space(6)
       text: root.glyph
       color: number.color
-      // Ten sam rozmiar co cyfry: chodzik ma mieścić się w wysokości czcionki,
-      // a nie wystawać ponad wiersz.
+      // Same size as the digits: the walker is to fit within the font height,
+      // not stick out above the line.
       font.family: number.font.family
       font.pixelSize: Style.font.body
       renderType: Text.NativeRendering
       opacity: number.opacity
     }
 
-    // Postęp do celu, nad chodzikiem i liczbą, na szerokość obu. Ścieżka bierze
-    // kolor stąd, co ścieżki suwaków w panelach Omarchy, więc chodzi za motywem
-    // zamiast być na sztywno czarna.
+    // Progress toward the goal, above the walker and the number, as wide as both.
+    // The track takes its color from the same place as slider tracks in Omarchy
+    // panels, so it follows the theme instead of being hard-coded black.
     Rectangle {
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.top: parent.top
       anchors.topMargin: Style.space(2)
       width: Math.round(button.contentWidth)
-      // Po osiągnięciu celu pasek znika: pełna kreska przez cały wieczór
-      // niczego już nie mówi, a sama liczba mówi wszystko.
+      // Once the goal is reached the bar disappears: a full line all evening
+      // says nothing anymore, and the number alone says everything.
       visible: root.progress < 1
       height: Style.space(2)
       radius: height / 2

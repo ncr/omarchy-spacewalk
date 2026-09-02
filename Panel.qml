@@ -19,9 +19,9 @@ Panel {
   readonly property var barIdentity: hostWidget || root
   readonly property int goal: service ? service.dailyGoal : 10000
 
-  // Kratka pod kursorem podmienia liczby u góry na tamten dzień; zjazd z kratek
-  // wraca do dzisiaj. Bez klikania — podglądanie historii to ruch myszy, nie
-  // wybór, który trzeba potem cofać.
+  // The cell under the cursor swaps the numbers up top to that day; leaving the
+  // grid goes back to today. No clicking — peeking at history is a mouse motion,
+  // not a choice you would have to undo.
   readonly property string selectedDay: hoveredDay ? hoveredDay.key : ""
   readonly property string todayKey: service && service.today !== "" ? service.today : Model.dayKey(new Date())
   readonly property bool showingToday: selectedDay === "" || selectedDay === todayKey
@@ -38,7 +38,7 @@ Panel {
   readonly property color fg: bar ? bar.foreground : Color.foreground
   readonly property string family: bar ? bar.fontFamily : Style.font.family
 
-  // Tempo z ostatniej minuty; gdy taśma stoi, prognoza dla ustawionej prędkości.
+  // Pace from the last minute; with the belt stopped, a forecast for the set speed.
   readonly property real stepsPerMinute: {
     if (!service) return 0
     var live = Model.paceFromSamples(service.paceOld, service.paceNew)
@@ -56,14 +56,14 @@ Panel {
     onTriggered: root.clockNow = new Date()
   }
 
-  // Ta sama linijka dla dziś i dla podglądanego dnia — schowanie jej przy
-  // kliknięciu w kratkę skracało panel i wszystko pod spodem podskakiwało.
+  // The same line for today and for the previewed day — hiding it on a grid
+  // cell click shortened the panel and everything below it jumped.
   readonly property string caption: showingToday
     ? Model.goalCaption(steps, goal, stepsPerMinute, clockNow)
     : Model.pastDayCaption(steps, goal)
 
-  // Kłopoty opisujemy rzeczowo; dopiero gdy wszystko gra, w tej linii chodzi
-  // karuzela (wzorem omaphones).
+  // Trouble is described matter-of-factly; only when all is well does the
+  // carousel run in this line (following omaphones).
   readonly property string problemLabel: {
     if (!service) return "no service"
     switch (service.linkState) {
@@ -76,9 +76,9 @@ Panel {
     }
   }
 
-  // Podtytuł nagłówka: kłopot opisujemy rzeczowo, a gdy wszystko gra, chodzi
-  // tu karuzela zdań — inna dla idącej taśmy, inna dla stojącej. Prędkość
-  // i nachylenie i tak stoją niżej, w kafelkach.
+  // Header subtitle: trouble is described matter-of-factly, and when all is
+  // well a carousel of phrases runs here — one set for a moving belt, another
+  // for a standing one. Speed and incline sit below in the tiles anyway.
   readonly property var walkingPhrases: [
     "You are walking",
     "Legs doing the work",
@@ -102,9 +102,9 @@ Panel {
     "Incline set, your move"
   ]
 
-  // Podtytuł nagłówka idzie wielkimi literami z rozstrzeleniem i przycina
-  // nadmiar wielokropkiem, więc zdania trzeba zmierzyć, a nie liczyć znaki
-  // na oko: to, co mieści się w jednym motywie, w innym już nie.
+  // The header subtitle goes uppercase with letter spacing and elides the
+  // overflow, so the phrases have to be measured, not sized by eyeballing
+  // character counts: what fits in one theme no longer fits in another.
   TextMetrics {
     id: metaMetrics
     font.family: root.family
@@ -113,8 +113,8 @@ Panel {
     font.letterSpacing: 1.2
   }
 
-  // Tyle miejsca zostaje podtytułowi: szerokość nagłówka bez ikony, odstępów
-  // i przełącznika na prawej krawędzi.
+  // How much room the subtitle gets: header width minus the icon, the gaps,
+  // and the switch at the right edge.
   readonly property real metaSpace: hero.width - hero.trailingInset - Style.font.display - Style.space(20)
 
   function fitsInHeader(text) {
@@ -128,8 +128,8 @@ Panel {
     return out.length > 0 ? out : [list[0]]
   }
 
-  // Który zestaw zdań obowiązuje. Osobno od samej listy, bo mierzenie tekstu
-  // zmienia właściwość TextMetrics — w wiązaniu robiłoby to pętlę.
+  // Which phrase set is in force. Separate from the list itself, because
+  // measuring text mutates a TextMetrics property — in a binding that would loop.
   readonly property string phraseSet: {
     if (!service || problemLabel !== "") return "none"
     if (service.walking) return "walk"
@@ -176,7 +176,7 @@ Panel {
     }
   }
 
-  // Przerwana w pół animacja zostawiłaby zdanie w połowie wygaszone.
+  // An animation cut off midway would leave the phrase half faded out.
   onRotatingChanged: if (!rotating) { phraseSwap.stop(); hero.metaOpacity = 1.0 }
 
   readonly property int gridWeeks: 13
@@ -188,13 +188,13 @@ Panel {
                                             : ({ steps: 0, days: 0 })
 
   property var hoveredDay: null
-  // Tylko dzień pod kursorem. Średnia stoi pod kratką i powtarzanie jej tutaj
-  // pokazywało tę samą liczbę dwa razy. Wiersz nagłówka bierze wysokość z
-  // napisu po lewej, więc pusty podpis niczego nie zwija.
+  // Only the day under the cursor. The average sits below the grid and repeating
+  // it here showed the same number twice. The header row takes its height from
+  // the label on the left, so an empty caption collapses nothing.
   readonly property string hoveredLabel: hoveredDay ? Model.formatDay(hoveredDay.date) : ""
 
-  // Kolory kratki z motywu: cztery stopnie wypełnienia liczone od koloru tekstu,
-  // a dzień z osiągniętym celem dostaje akcent, żeby odcinał się od reszty.
+  // Grid colors from the theme: four fill levels derived from the text color,
+  // and a day that reached the goal gets the accent, to stand apart from the rest.
   function levelColor(level) {
     var base = bar ? bar.foreground : Color.foreground
     switch (level) {
@@ -206,8 +206,9 @@ Panel {
     }
   }
 
-  // Przełącznik w nagłówku zastąpił przycisk na dole: rusza taśmę i ją zatrzymuje.
-  // Bieżnia sama wstrzymuje taśmę, gdy z niej zejdziesz, a start ją wtedy wznawia.
+  // The switch in the header replaced the button at the bottom: it starts the
+  // belt and stops it. The treadmill pauses the belt itself when you step off,
+  // and start then resumes it.
   function toggleBelt() {
     if (!service) return
     if (service.walking) service.stop()
@@ -246,23 +247,33 @@ Panel {
       root.bar.centerHoverRevealSuppressed = value
   }
 
-  // Kafelki pokazują wartość ZADANĄ, nie chwilowy odczyt. Strzałki zmieniają
-  // właśnie ją, a bieżnia po drodze rozpędza się i hamuje: schodząc z taśmy
-  // widziało się 1 km/h w połowie hamowania, choć zadane były 2,5.
+  // The tiles show the TARGET value, not the momentary reading. The arrows
+  // change exactly that, and the treadmill speeds up and brakes along the way:
+  // stepping off the belt you saw 1 km/h mid-braking though the target was 2.5.
   readonly property real shownSpeed: service ? service.targetSpeed : 0
   readonly property real shownIncline: service ? service.targetIncline : 0
 
   function bumpSpeed(delta) {
     if (!service) return
-    // Bieżnia obsługuje 1,0–6,0 km/h co 0,1 (jej własna deklaracja).
+    // The treadmill supports 1.0–6.0 km/h in 0.1 steps (its own declaration).
     service.setSpeed(Math.max(1.0, Math.min(6.0, shownSpeed + delta)))
   }
 
   function bumpIncline(delta) {
     if (!service) return
-    // Nachylenie 0–9 co 1.
+    // Incline 0–9 in steps of 1.
     service.setIncline(Math.max(0, Math.min(9, Math.round(shownIncline + delta))))
   }
+
+  // Where the panel card lies on screen — for tools/hero-set, which crops the
+  // screenshots: the panel layer covers the whole screen, so the card rectangle
+  // cannot be seen from outside. Published while the panel is open, empty when
+  // closed.
+  readonly property string panelRectText: panel.open
+    ? [Math.round(panel.cardOrigin.x), Math.round(panel.cardOrigin.y),
+       Math.round(panel.contentWidth), Math.round(panel.contentHeight)].join(" ")
+    : ""
+  onPanelRectTextChanged: if (service) service.panelRect = panelRectText
 
   KeyboardPanel {
     id: panel
@@ -288,7 +299,7 @@ Panel {
         topPadding: Style.space(16)
         bottomPadding: Style.space(16)
 
-        // ---- nagłówek: co robi bieżnia i przełącznik, który ją rusza
+        // ---- header: what the treadmill is doing, and the switch that runs it
         Item {
           id: header
           width: parent.width - Style.space(32)
@@ -313,7 +324,7 @@ Panel {
               }
             }
 
-            // Dwie pozycje zamiast przycisku na dole: taśma jedzie albo stoi.
+            // Two positions instead of a button at the bottom: the belt runs or stands.
             trailingControl: Component {
               ToggleSwitch {
                 id: beltSwitch
@@ -335,11 +346,11 @@ Panel {
           }
         }
 
-        // ---- kroki: główna liczba
+        // ---- steps: the main number
         //
-        // Pełna szerokość i środkowanie w niej: przy zwykłym centrowaniu napis
-        // zmieniał szerokość razem z liczbą i przy przesuwaniu kursora po
-        // kratkach drgał — a zmienia się tu co kratkę.
+        // Full width with centering inside it: with plain centering the label
+        // changed width along with the number and twitched while moving the
+        // cursor across the grid — and here it changes with every cell.
         Text {
           width: parent.width
           height: Math.round(52 * 1.25)
@@ -352,7 +363,7 @@ Panel {
           font.bold: true
         }
 
-        // ---- pasek postępu + kiedy koniec
+        // ---- progress bar + when it ends
         Column {
           width: parent.width
           spacing: Style.space(6)
@@ -362,7 +373,7 @@ Panel {
             width: parent.width - Style.space(32)
             height: Style.space(8)
             radius: height / 2
-            // Ścieżka z motywu, jak przy suwakach w panelach Omarchy.
+            // Track from the theme, like the sliders in Omarchy panels.
             color: root.bar ? Style.selectedFillFor(root.bar.foreground, Color.accent)
                             : Style.selectedFill
 
@@ -371,9 +382,9 @@ Panel {
               height: parent.height
               radius: parent.radius
               color: root.progress >= 1 ? (root.bar ? root.bar.urgent : Color.urgent) : root.fg
-              // Krótko, bo przy przesuwaniu kursora po kratkach pasek dostaje
-              // nową wartość co kilkadziesiąt milisekund i dłuższa animacja
-              // zamienia się w pływanie.
+              // Short, because while moving the cursor across the grid the bar
+              // gets a new value every few tens of milliseconds and a longer
+              // animation turns into floating.
               Behavior on width { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
             }
           }
@@ -392,9 +403,9 @@ Panel {
           }
         }
 
-        // ---- kalorie, czas, dystans
-        // Trzy równe kolumny zamiast wiersza dopasowanego do treści: inaczej
-        // każda zmiana liczby cyfr przesuwa wszystkie trzy w bok.
+        // ---- calories, time, distance
+        // Three equal columns instead of a content-sized row: otherwise every
+        // change in digit count shifts all three sideways.
         Row {
           id: statsRow
           width: parent.width
@@ -442,13 +453,13 @@ Panel {
 
         PanelSeparator { width: parent.width }
 
-        // ---- kratka ostatnich 13 tygodni
+        // ---- grid of the last 13 weeks
         Column {
           width: parent.width
           spacing: Style.space(6)
 
-          // Nad kratką tylko data dnia pod kursorem, wyśrodkowana. Wiersz trzyma
-          // swoją wysokość także pusty, żeby kratka nie skakała.
+          // Above the grid only the date of the day under the cursor, centered.
+          // The row keeps its height even when empty, so the grid does not jump.
           Text {
             width: parent.width
             height: Math.round(Style.font.caption * 1.7)
@@ -466,9 +477,9 @@ Panel {
             id: dayGrid
             anchors.horizontalCenter: parent.horizontalCenter
 
-            // Strażnik całego obszaru kratek: gdy kursor go opuszcza, wracamy
-            // do dzisiaj. Samo „wyszedłem z kratki" nie wystarcza — przy szybkim
-            // ruchu zdarzenie potrafi nie dojść i zostaje ostatni podglądany dzień.
+            // Guard over the whole grid area: when the cursor leaves it, we go
+            // back to today. A cell's own "I left" is not enough — on a fast move
+            // the event can fail to arrive and the last previewed day sticks.
             HoverHandler {
               id: gridHover
               onHoveredChanged: if (!hovered) root.hoveredDay = null
@@ -488,8 +499,8 @@ Panel {
                 radius: Style.space(3)
                 opacity: modelData.future ? 0.25 : 1.0
                 color: root.levelColor(Model.dayLevel(modelData.steps, root.goal))
-                // Wybrany dzień obrysowany kolorem tekstu, dzisiejszy kolorem
-                // alarmowym; wybór jest ważniejszy, bo to on rządzi liczbami.
+                // The selected day outlined in the text color, today in the
+                // urgent color; selection matters more — it governs the numbers.
                 border.width: modelData.key === root.selectedDay ? 2
                               : (modelData.key === root.todayKey ? 1 : 0)
                 border.color: modelData.key === root.selectedDay
@@ -500,16 +511,16 @@ Panel {
                   anchors.fill: parent
                   hoverEnabled: true
                   onEntered: root.hoveredDay = modelData
-                  // Tylko własne wyjście: przy przechodzeniu między kratkami
-                  // sygnały się przeplatają i czyszczenie na ślepo gasiłoby
-                  // dzień, który właśnie wszedł pod kursor.
+                  // Only its own exit: when crossing between cells the signals
+                  // interleave, and clearing blindly would wipe the day that just
+                  // came under the cursor.
                   onExited: if (root.hoveredDay === modelData) root.hoveredDay = null
                 }
               }
             }
           }
 
-          // Średnia z dni marszu — jedna liczba, która podsumowuje kratkę.
+          // Average over walking days — one number that sums up the grid.
           Text {
             width: parent.width
             height: Math.round(Style.font.bodySmall * 1.6)
@@ -537,21 +548,21 @@ Panel {
 
         PanelSeparator { width: parent.width }
 
-        // ---- sterowanie: dwa kafelki, strzałki przy wartości
+        // ---- controls: two tiles, arrows next to the value
         Row {
           anchors.horizontalCenter: parent.horizontalCenter
           spacing: Style.space(10)
 
           Repeater {
             model: [
-              // Podpisy stałe: „prędkość po starcie" nie mieściła się w kafelku
-              // i rozpychała oba. Że wartość dopiero czeka na start, widać po
-              // przygaszeniu i z podpowiedzi.
+              // Fixed labels: "speed after start" did not fit in the tile and
+              // stretched both. That the value is still waiting for a start shows
+              // in the dimming and in the tooltip.
               { kind: "speed", label: "speed",
                 value: root.shownSpeed.toFixed(1) + " km/h" },
               { kind: "incline", label: "incline",
-                // Bieżnia podaje nachylenie w procentach (0–9%), więc znak
-                // procenta należy do wartości, nie do etykiety.
+                // The treadmill reports incline in percent (0–9%), so the
+                // percent sign belongs to the value, not the label.
                 value: String(Math.round(root.shownIncline)) + "%" }
             ]
 

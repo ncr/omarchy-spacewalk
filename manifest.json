@@ -25,7 +25,8 @@
       "dailyGoal": 10000,
       "startSpeed": 2.5,
       "startIncline": 3,
-      "strideMeters": 0
+      "strideMeters": 0,
+      "phonePort": 0
     },
     "schema": [
       {
@@ -52,6 +53,11 @@
         "key": "strideMeters",
         "type": "number",
         "label": "Stride length in metres (0 = steps from the treadmill)"
+      },
+      {
+        "key": "phonePort",
+        "type": "number",
+        "label": "Apple Health sync port (0 = off)"
       }
     ]
   }

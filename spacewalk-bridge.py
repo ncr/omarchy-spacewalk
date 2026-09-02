@@ -1,18 +1,14 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["bleak>=0.22"]
-# ///
-"""Most między bieżnią (Bluetooth, FTMS) a pluginem Omarchy.
+#!/usr/bin/env python3
+"""Bridge between the treadmill (Bluetooth, FTMS) and the Omarchy plugin.
 
-Na stdout leci po jednym obiekcie JSON na linię:
+Emits one JSON object per line on stdout:
 
     {"t":"status","state":"connected","device":"..."}
     {"t":"data","speed":2.5,"incline":3.0,"distance_m":1840,"kcal":62,
      "elapsed_s":1620,"steps":2705,"day_steps":7412,...}
     {"t":"error","msg":"..."}
 
-Ze stdin czyta po jednej komendzie na linię:
+Reads one command per line from stdin:
 
     start | stop | pause | speed 2.5 | incline 3 | reset-day | ping
 """
@@ -27,8 +23,16 @@ import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from bleak import BleakClient, BleakScanner
-from bleak.exc import BleakError
+try:
+    from bleak import BleakClient, BleakScanner
+    from bleak.exc import BleakError
+except ImportError:
+    # Without bleak there is nothing to talk Bluetooth with. This error
+    # lands in the panel, so it says outright what to install.
+    print(json.dumps({"t": "error",
+                      "msg": "python-bleak is not installed — sudo pacman -S python-bleak"}),
+          flush=True)
+    sys.exit(66)
 
 FTMS_SERVICE = "00001826-0000-1000-8000-00805f9b34fb"
 TREADMILL_DATA = "00002acd-0000-1000-8000-00805f9b34fb"
@@ -37,7 +41,7 @@ MACHINE_STATUS = "00002ada-0000-1000-8000-00805f9b34fb"
 
 STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "omarchy-spacewalk"
 
-# Kody operacji punktu sterowania (FTMS 4.16.1)
+# Control point opcodes (FTMS 4.16.1)
 OP_REQUEST_CONTROL = 0x00
 OP_RESET = 0x01
 OP_SET_SPEED = 0x02
@@ -48,20 +52,20 @@ RESPONSE_CODE = 0x80
 RESULT_SUCCESS = 0x01
 
 RESULT_NAMES = {
-    0x01: "przyjęte",
-    0x02: "nieobsługiwane",
-    0x03: "zły parametr",
-    0x04: "odrzucone",
-    0x05: "brak sterowania",
+    0x01: "accepted",
+    0x02: "not supported",
+    0x03: "bad parameter",
+    0x04: "rejected",
+    0x05: "no control",
 }
 
 
 LOG_PATH = STATE_DIR / "bridge.log"
 SESSIONS_PATH = STATE_DIR / "sessions.jsonl"
 
-# Po tylu sekundach bez ruchu uznajemy przejście za skończone. Bieżnia
-# zatrzymuje się sama, gdy nikt na niej nie stoi, więc krótka przerwa na
-# poprawienie czegoś przy biurku nie powinna dzielić marszu na dwie sesje.
+# After this many seconds without movement the walk counts as finished. The
+# treadmill stops itself when nobody is standing on it, so a short break to fix
+# something at the desk should not split a walk into two sessions.
 SESSION_IDLE_GAP = 90
 
 
@@ -69,8 +73,8 @@ def emit(obj):
     line = json.dumps(obj, separators=(",", ":"))
     sys.stdout.write(line + "\n")
     sys.stdout.flush()
-    # Kopia do pliku: stdout mostu czyta shell, więc bez tego nie da się
-    # zajrzeć, co bieżnia mówi, gdy plugin działa.
+    # Copy to a file: the shell consumes the bridge's stdout, so without this
+    # there is no way to see what the treadmill says while the plugin runs.
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         with LOG_PATH.open("a") as fh:
@@ -87,14 +91,14 @@ def error(msg):
     emit({"t": "error", "msg": str(msg)})
 
 
-# ---------------------------------------------------------------- dane bieżni
+# ------------------------------------------------------------- treadmill data
 
 def parse_treadmill_data(data: bytes) -> dict:
-    """Rozbiera pakiet Treadmill Data (0x2ACD).
+    """Parses a Treadmill Data packet (0x2ACD).
 
-    Pierwsze dwa bajty to flagi; każde pole jest obecne tylko wtedy, gdy jego bit
-    to mówi, a pola idą w kolejności z tabeli 4.9.1.1 specyfikacji FTMS. Bit 0 jest
-    odwrócony: 0 znaczy „prędkość chwilowa jest w pakiecie".
+    The first two bytes are flags; each field is present only when its bit
+    says so, and the fields come in the order of table 4.9.1.1 of the FTMS
+    spec. Bit 0 is inverted: 0 means "instantaneous speed is in the packet".
     """
     if len(data) < 2:
         return {}
@@ -105,7 +109,7 @@ def parse_treadmill_data(data: bytes) -> dict:
     def take(width, signed=False):
         nonlocal pos
         if pos + width > len(data):
-            raise ValueError("pakiet krótszy niż wynika z flag")
+            raise ValueError("packet shorter than its flags claim")
         value = int.from_bytes(data[pos:pos + width], "little", signed=signed)
         pos += width
         return value
@@ -119,7 +123,7 @@ def parse_treadmill_data(data: bytes) -> dict:
             out["distance_m"] = take(3)
         if flags & 0x0008:
             out["incline"] = take(2, signed=True) / 10.0     # %
-            out["ramp_angle"] = take(2, signed=True) / 10.0  # stopnie
+            out["ramp_angle"] = take(2, signed=True) / 10.0  # degrees
         if flags & 0x0010:
             out["elevation_pos_m"] = take(2) / 10.0
             out["elevation_neg_m"] = take(2) / 10.0
@@ -140,22 +144,22 @@ def parse_treadmill_data(data: bytes) -> dict:
             out["elapsed_s"] = take(2)
         if flags & 0x0800:
             out["remaining_s"] = take(2)
-        # Bit 13 nie istnieje w specyfikacji FTMS — Urevo dopisał w tym miejscu
-        # licznik kroków (uint24). Sprawdzone na URTM024: 179 kroków na 100 m
-        # marszu, podczas gdy czas w tym samym pakiecie rósł równo 1/s.
+        # Bit 13 does not exist in the FTMS spec — Urevo put a step counter
+        # (uint24) here. Verified on URTM024: 179 steps per 100 m of walking,
+        # while the time in the same packet grew by exactly 1/s.
         if flags & 0x2000:
             out["steps"] = take(3)
     except ValueError as exc:
-        error(f"{exc}: flagi 0x{flags:04x}, dane {data.hex(' ')}")
+        error(f"{exc}: flags 0x{flags:04x}, data {data.hex(' ')}")
 
     return out
 
 
-# ------------------------------------------------------------- dzienny licznik
+# --------------------------------------------------------------- daily totals
 
 class DayTotals:
-    """Suma dnia: bieżnia zeruje liczniki przy każdym starcie, więc dodajemy
-    przyrosty, a nie nadpisujemy sumy."""
+    """Daily total: the treadmill zeroes its counters on every start, so we
+    add increments instead of overwriting the sum."""
 
     FIELDS = ("steps", "distance_m", "kcal", "elapsed_s")
 
@@ -178,7 +182,7 @@ class DayTotals:
         except FileNotFoundError:
             pass
         except (ValueError, OSError) as exc:
-            error(f"nie mogę wczytać {self.path}: {exc}")
+            error(f"cannot load {self.path}: {exc}")
 
     def save(self):
         if not self.dirty:
@@ -192,7 +196,7 @@ class DayTotals:
             tmp.replace(self.path)
             self.dirty = False
         except OSError as exc:
-            error(f"nie mogę zapisać {self.path}: {exc}")
+            error(f"cannot save {self.path}: {exc}")
 
     def roll_over_if_needed(self):
         today = date.today()
@@ -206,12 +210,13 @@ class DayTotals:
         emit({"t": "history", "days": read_history()})
 
     def update(self, sample: dict):
-        """Przyjmuje wartości narastające od początku sesji i dolicza różnicę.
+        """Takes values cumulative since the session start and adds the delta.
 
-        Dystans, kalorie i czas doliczają się tylko wtedy, gdy w tym samym
-        odczycie przybyło kroków. Bieżnia liczy dystans od ruchu pasa, a kroki
-        od człowieka — bez tego warunku pusta, kręcąca się taśma dopisywała do
-        dnia metry i kalorie, których nikt nie przeszedł (150 m zamiast 30).
+        Distance, calories and time count only when the same reading also
+        gained steps. The treadmill counts distance from belt movement but
+        steps from the person — without this condition an empty, spinning belt
+        credited the day with meters and calories nobody walked (150 m instead
+        of 30).
         """
         self.roll_over_if_needed()
 
@@ -222,15 +227,15 @@ class DayTotals:
             value = float(sample[f])
             previous = self.session[f]
             if previous is None:
-                # Pierwszy odczyt po starcie albo po połączeniu: nie wiadomo,
-                # ile z tego licznika już zaliczyliśmy, więc służy on wyłącznie
-                # za punkt odniesienia. Bez tego naciśnięcie Startu doliczało
-                # cały licznik poprzedniego przejścia jeszcze raz.
+                # First reading after a start or after connecting: no telling
+                # how much of this counter was already credited, so it serves
+                # only as a reference point. Without this, pressing Start
+                # credited the previous walk's whole counter once more.
                 self.session[f] = value
                 deltas[f] = 0.0
                 continue
             if value < previous:
-                # Bieżnia wyzerowała licznik — liczymy od zera.
+                # The treadmill zeroed the counter — count from zero.
                 previous = 0.0
             deltas[f] = value - previous
             self.session[f] = value
@@ -247,8 +252,8 @@ class DayTotals:
         return applied
 
     def new_session(self):
-        """Kasuje punkt odniesienia, nie zeruje go: dopiero pierwszy odczyt
-        powie, od czego liczyć przyrosty."""
+        """Drops the reference point instead of zeroing it: only the first
+        reading says what to count increments from."""
         self.session = {f: None for f in self.FIELDS}
 
     def snapshot(self) -> dict:
@@ -261,14 +266,15 @@ class DayTotals:
         }
 
 
-# ------------------------------------------------------------------- historia
+# -------------------------------------------------------------------- history
 
 HISTORY_DAYS = 120
 
 
 def read_history(days: int = HISTORY_DAYS) -> dict:
-    """Sumy z ostatnich dni, prosto z plików dnia. Panel rysuje z tego kratkę,
-    więc czytamy katalog raz przy starcie, nie przy każdym otwarciu panelu."""
+    """Totals for recent days, straight from the day files. The panel draws
+    its grid from this, so we read the directory once at startup, not every
+    time the panel opens."""
     out = {}
     today = date.today()
     for offset in range(days):
@@ -287,7 +293,7 @@ def read_history(days: int = HISTORY_DAYS) -> dict:
     return out
 
 
-# --------------------------------------------------------- serwer dla telefonu
+# ---------------------------------------------------------------- phone server
 
 def read_sessions() -> list[dict]:
     try:
@@ -326,8 +332,9 @@ def mark_sent(ids: list[str]) -> int:
 
 
 def tailscale_ip() -> str:
-    """Adres tego komputera w tailnecie. Bez niego serwer nie ma się na czym
-    postawić tak, żeby telefon go widział, a reszta sieci nie."""
+    """This machine's address in the tailnet. Without it there is nowhere to
+    bind the server so that the phone sees it and the rest of the network does
+    not."""
     try:
         out = subprocess.run(["tailscale", "ip", "-4"], capture_output=True,
                              text=True, timeout=5).stdout.strip().splitlines()
@@ -335,26 +342,26 @@ def tailscale_ip() -> str:
             return out[0].strip()
     except (OSError, subprocess.SubprocessError):
         pass
-    error("nie znalazłem adresu Tailscale — serwer stanie tylko na localhost")
+    error("no Tailscale address — the server will only listen on localhost")
     return "127.0.0.1"
 
 
 class PhoneServer:
-    """Trzy adresy dla skrótu na iPhonie, po Tailscale:
+    """Three endpoints for the iPhone shortcut, over Tailscale:
 
-        GET  /pending   niewysłane przejścia
-        POST /ack       {"ids": [...]} — oznacz jako wysłane
-        GET  /today     sumy dnia (podgląd)
+        GET  /pending   walks not yet sent
+        POST /ack       {"ids": [...]} — mark as sent
+        GET  /today     daily totals (preview)
 
-    Słucha tylko na podanym adresie, domyślnie tym z Tailscale, więc nie
-    wystawia niczego do sieci lokalnej ani do internetu.
+    Listens only on the given address, by default the Tailscale one, so it
+    exposes nothing to the local network or the internet.
     """
 
     def __init__(self, host: str, port: int):
         self.host = host
         self.port = port
-        # Co wydało ostatnie /pending — żeby skrót mógł potwierdzić odbiór
-        # jednym wywołaniem, bez składania JSON-a z identyfikatorami.
+        # What the last /pending handed out — so the shortcut can confirm
+        # receipt in one call, without assembling JSON with the ids.
         self.last_served: list[str] = []
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
@@ -399,9 +406,9 @@ class PhoneServer:
         if method == "GET" and path == "/pending":
             pending = [r for r in read_sessions() if not r.get("sent")]
             self.last_served = [r["id"] for r in pending]
-            # Skróty na iPhonie nie zamieniają "2026-08-31T12:47:32" na datę
-            # same z siebie; ze spacją zamiast T akcja „Uzyskaj datę z tekstu"
-            # radzi sobie bez ustawiania formatu.
+            # iPhone Shortcuts do not turn "2026-08-31T12:47:32" into a date
+            # on their own; with a space instead of the T the "Get dates from
+            # input" action copes without a format being set.
             for r in pending:
                 r["end_text"] = r.get("end", "").replace("T", " ")
                 r["start_text"] = r.get("start", "").replace("T", " ")
@@ -419,29 +426,29 @@ class PhoneServer:
             try:
                 ids = json.loads(body or b"{}").get("ids") or []
             except ValueError:
-                return "400 Bad Request", {"error": "zły JSON"}
+                return "400 Bad Request", {"error": "bad JSON"}
             return "200 OK", {"marked": mark_sent([str(i) for i in ids])}
-        return "404 Not Found", {"error": "nie ma takiego adresu"}
+        return "404 Not Found", {"error": "no such path"}
 
     async def serve(self):
-        # Ponawiamy, zamiast się poddać: przy restarcie shella poprzedni most
-        # potrafi jeszcze przez chwilę trzymać port, a zakończenie tego zadania
-        # ubijało cały most (run() kończy się na pierwszym gotowym zadaniu).
+        # Retry instead of giving up: after a shell restart the previous bridge
+        # can hold the port a moment longer, and finishing this task used to
+        # kill the whole bridge (run() ends on the first completed task).
         while True:
             try:
                 server = await asyncio.start_server(self.handle, self.host, self.port)
                 break
             except OSError as exc:
-                error(f"port {self.host}:{self.port} zajęty ({exc}) — ponawiam za 5 s")
+                error(f"port {self.host}:{self.port} is taken ({exc}) — retrying in 5 s")
                 await asyncio.sleep(5.0)
-        # Własny typ, nie status: „status" opisuje połączenie z bieżnią i panel
-        # bierze go wprost jako stan łącza.
+        # Its own type, not "status": "status" describes the treadmill link
+        # and the panel takes it directly as the connection state.
         emit({"t": "server", "address": f"{self.host}:{self.port}"})
         async with server:
             await server.serve_forever()
 
 
-# ------------------------------------------------------------------ połączenie
+# ----------------------------------------------------------------- connection
 
 class Bridge:
     def __init__(self, address: str | None, steps_uuid: str | None, stride_m: float):
@@ -460,25 +467,25 @@ class Bridge:
         self.session_last_move: float = 0.0
         self.session_peak: dict = {}
         self.server: PhoneServer | None = None
-        # running | paused | stopped — pauza to zejście z taśmy, stop to komenda
-        # albo wyłącznik bezpieczeństwa. Bieżnia rozróżnia jedno od drugiego
-        # w statusie maszyny, panel pokazuje to i proponuje wznowienie.
+        # running | paused | stopped — pause means stepping off the belt, stop
+        # a command or the safety key. The treadmill tells one from the other
+        # in the machine status; the panel shows it and offers to resume.
         self.belt_state = "stopped"
 
     @property
     def running_belt(self) -> bool:
         return self.latest.get("speed", 0) > 0
 
-    # ---- sesje (przejścia) do wysłania na telefon
+    # ---- sessions (walks) to be sent to the phone
 
     def track_session(self, applied: dict):
-        """Otwiera przejście przy pierwszym ruchu i zamyka po SESSION_IDLE_GAP
-        sekund bezruchu.
+        """Opens a walk on the first movement and closes it after
+        SESSION_IDLE_GAP seconds without any.
 
-        Sumuje te same przyrosty, które idą do licznika dnia — nie wskazania
-        bieżni. Wskazania przeżywają restart mostu, więc liczone z nich
-        przejście zapisywało się po każdym restarcie w całości od nowa
-        i kolejka do telefonu puchła od duplikatów.
+        Sums the same increments that feed the daily counter — not the
+        treadmill's readings. The readings survive a bridge restart, so a walk
+        counted from them was recorded whole all over again after every
+        restart, and the queue for the phone swelled with duplicates.
         """
         now = time.monotonic()
 
@@ -500,7 +507,7 @@ class Bridge:
         self.session_started_at = None
         self.session_peak = {}
         if peak.get("steps", 0) <= 0:
-            return  # taśma kręciła się bez nikogo — nie ma czego zapisywać
+            return  # the belt spun with nobody on it — nothing worth recording
         record = {
             "id": started.strftime("%Y%m%dT%H%M%S"),
             "start": started.isoformat(timespec="seconds"),
@@ -516,22 +523,23 @@ class Bridge:
             with SESSIONS_PATH.open("a") as fh:
                 fh.write(json.dumps(record) + "\n")
         except OSError as exc:
-            error(f"nie mogę zapisać sesji: {exc}")
+            error(f"cannot save the session: {exc}")
         emit({"t": "session", **record})
 
     def publish_targets(self):
-        """Cele osobno od odczytów: gdy taśma stoi, bieżnia raportuje zera,
-        a panel ma pokazywać to, co zostanie zadane po starcie."""
+        """Targets kept apart from readings: when the belt stands still the
+        treadmill reports zeros, and the panel should show what will be set
+        after start."""
         emit({"t": "targets", "target_speed": self.target_speed,
               "target_incline": self.target_incline})
 
     def phase(self, name: str, text: str):
-        """Postęp startu dla panelu. Bieżnia rusza z opóźnieniem, potwierdza
-        komendy po kilku sekundach i cele przyjmuje dopiero po rozpędzeniu —
-        bez tego przycisk Start wygląda, jakby nic nie zrobił."""
+        """Start progress for the panel. The treadmill starts with a delay,
+        confirms commands seconds later and accepts targets only once up to
+        speed — without this the Start button looks like it did nothing."""
         emit({"t": "phase", "phase": name, "text": text})
 
-    # ---- odbiór
+    # ---- receiving
 
     def steps_from(self, sample: dict) -> float | None:
         if "steps" in sample:
@@ -564,9 +572,9 @@ class Bridge:
             emit({"t": "control", "raw": raw.hex(" ")})
 
     def on_machine_status(self, _sender, data: bytearray):
-        """Stan maszyny (FTMS 4.17): 0x02 to zatrzymanie przez użytkownika,
-        gdzie parametr 0x01 znaczy stop, a 0x02 pauzę — bieżnia sama pauzuje,
-        gdy nikt na niej nie stoi. 0x04 to start albo wznowienie."""
+        """Machine status (FTMS 4.17): 0x02 is a stop by the user, where
+        parameter 0x01 means stop and 0x02 pause — the treadmill pauses on its
+        own when nobody is standing on it. 0x04 is a start or a resume."""
         raw = bytes(data)
         emit({"t": "machine", "raw": raw.hex(" ")})
         if raw[:1] == b"\x02":
@@ -574,9 +582,9 @@ class Bridge:
             self.belt_state = "paused" if paused else "stopped"
             emit({"t": "belt", "state": self.belt_state})
             self.phase("paused" if paused else "stopped",
-                       "spauzowana — zszedłeś z taśmy" if paused else "zatrzymana")
+                       "paused — you stepped off the belt" if paused else "stopped")
             self.day.save()
-        elif raw[:1] == b"\x03":  # wyłącznik bezpieczeństwa
+        elif raw[:1] == b"\x03":  # safety key
             self.belt_state = "stopped"
             emit({"t": "belt", "state": self.belt_state})
             self.day.save()
@@ -584,31 +592,31 @@ class Bridge:
             self.belt_state = "running"
             emit({"t": "belt", "state": self.belt_state})
 
-    # ---- wysyłka
+    # ---- sending
 
-    # Bieżnia potwierdza start nawet po 7 s (sprawdzone w logu), więc krótszy
-    # limit robił z udanej komendy błąd.
+    # The treadmill confirms a start as late as 7 s in (seen in the log), so
+    # a shorter timeout turned a successful command into an error.
     async def send_command(self, opcode: int, payload: bytes = b"", timeout: float = 10.0) -> bool:
         if not self.client or not self.client.is_connected:
-            error("bieżnia nie jest połączona")
+            error("the treadmill is not connected")
             return False
         while not self.control_replies.empty():
             self.control_replies.get_nowait()
         try:
             await self.client.write_gatt_char(CONTROL_POINT, bytes([opcode]) + payload, response=True)
         except BleakError as exc:
-            error(f"zapis komendy 0x{opcode:02x} nieudany: {exc}")
+            error(f"writing command 0x{opcode:02x} failed: {exc}")
             return False
         try:
             replied_op, result = await asyncio.wait_for(self.control_replies.get(), timeout)
         except asyncio.TimeoutError:
-            error(f"brak odpowiedzi na komendę 0x{opcode:02x}")
+            error(f"no reply to command 0x{opcode:02x}")
             return False
         if replied_op != opcode:
-            error(f"odpowiedź na inną komendę: 0x{replied_op:02x}")
+            error(f"reply to a different command: 0x{replied_op:02x}")
             return False
         if result != RESULT_SUCCESS:
-            error(f"komenda 0x{opcode:02x} odrzucona: {RESULT_NAMES.get(result, hex(result))}")
+            error(f"command 0x{opcode:02x} rejected: {RESULT_NAMES.get(result, hex(result))}")
             return False
         return True
 
@@ -620,44 +628,45 @@ class Bridge:
         return speed_ok and incline_ok
 
     async def apply_targets(self):
-        """Dosyła prędkość i nachylenie po starcie, aż bieżnia je pokaże.
+        """Keeps sending speed and incline after start until the treadmill
+        shows them.
 
-        Rytm dobrany na sprzęcie: pierwsza próba dopiero po 9 s, bo komenda
-        wysłana wcześniej ginie bez odpowiedzi — bieżnia rozpędza się do 1 km/h
-        i dopiero wtedy słucha. Kolejne co 3 s, z krótkim czekaniem na
-        potwierdzenie: brak odpowiedzi znaczy „zignorowane", więc nie ma po co
-        czekać pełnych 10 s jak przy starcie.
+        The rhythm was tuned on the hardware: the first attempt only after
+        9 s, because a command sent earlier vanishes without a reply — the
+        treadmill spins up to 1 km/h and only then listens. Then every 3 s,
+        with a short wait for the confirmation: no reply means "ignored", so
+        there is no point waiting the full 10 s as at start.
         """
-        self.phase("spinup", "taśma rusza, czekam aż się rozpędzi")
+        self.phase("spinup", "belt is starting, waiting for it to come up to speed")
         await asyncio.sleep(6.0)
         for attempt in range(10):
             await asyncio.sleep(3.0)
             if not self.client or not self.client.is_connected:
-                self.phase("error", "rozłączyło bieżnię")
+                self.phase("error", "the treadmill disconnected")
                 return
-            # Taśma stanęła (bieżnia zatrzymuje się sama, gdy nikt na niej nie
-            # stoi) — dosyłanie celów do stojącej maszyny zwraca same błędy.
+            # The belt stopped (the treadmill stops itself when nobody is on
+            # it) — sending targets to a stopped machine yields only errors.
             if self.latest.get("speed", 0) <= 0:
-                self.phase("failed", "taśma nie ruszyła")
+                self.phase("failed", "the belt did not start")
                 return
             if self.targets_reached():
                 self.phase("running", self.running_text())
                 return
             if self.target_speed is not None and abs(self.latest.get("speed", 0) - self.target_speed) >= 0.05:
-                self.phase("setting", f"zadaję {self.target_speed:.1f} km/h".replace(".", ","))
+                self.phase("setting", f"setting {self.target_speed:.1f} km/h")
                 await self.send_command(OP_SET_SPEED,
                                         round(self.target_speed * 100).to_bytes(2, "little"),
                                         timeout=4.0)
             if self.target_incline is not None and abs(self.latest.get("incline", 0) - self.target_incline) >= 0.05:
-                self.phase("setting", f"zadaję nachylenie {round(self.target_incline)}")
+                self.phase("setting", f"setting incline {round(self.target_incline)}")
                 await self.send_command(OP_SET_INCLINATION,
                                         round(self.target_incline * 10).to_bytes(2, "little", signed=True),
                                         timeout=4.0)
         self.phase("running" if self.targets_reached() else "partial", self.running_text())
 
     def running_text(self) -> str:
-        speed = f"{self.latest.get('speed', 0):.1f}".replace(".", ",")
-        return f"jedzie {speed} km/h, nachylenie {round(self.latest.get('incline', 0))}"
+        speed = f"{self.latest.get('speed', 0):.1f}"
+        return f"running {speed} km/h, incline {round(self.latest.get('incline', 0))}"
 
     async def request_control(self) -> bool:
         if self.has_control:
@@ -682,10 +691,10 @@ class Bridge:
             return
 
         if cmd == "start":
-            self.phase("control", "przejmuję sterowanie bieżnią")
+            self.phase("control", "taking control of the treadmill")
         if not await self.request_control():
             if cmd == "start":
-                self.phase("error", "bieżnia nie oddała sterowania")
+                self.phase("error", "the treadmill would not hand over control")
             return
 
         if cmd == "start":
@@ -695,27 +704,27 @@ class Bridge:
             if len(args) > 1:
                 self.target_incline = float(args[1])
             self.publish_targets()
-            self.phase("starting", "wysłałem start, czekam na potwierdzenie")
-            # Brak potwierdzenia nie znaczy, że taśma nie ruszyła — bywa, że
-            # odpowiedź gubi się, a bieżnia startuje. Cele dosyłamy tak czy siak;
-            # apply_targets i tak przerwie, gdy taśma stoi.
+            self.phase("starting", "sent start, waiting for the reply")
+            # No confirmation does not mean the belt did not start — sometimes
+            # the reply gets lost while the treadmill starts anyway. Targets go
+            # out either way; apply_targets bails out when the belt stands.
             if not await self.send_command(OP_START):
-                self.phase("unconfirmed", "brak potwierdzenia, sprawdzam czy ruszyła")
+                self.phase("unconfirmed", "no reply, checking whether the belt moved")
             asyncio.create_task(self.apply_targets())
         elif cmd == "stop":
             if await self.send_command(OP_STOP, bytes([0x01])):
                 self.day.save()
-                self.phase("stopped", "zatrzymana")
+                self.phase("stopped", "stopped")
         elif cmd == "pause":
             if await self.send_command(OP_STOP, bytes([0x02])):
                 self.day.save()
-                self.phase("stopped", "pauza")
+                self.phase("stopped", "paused")
         elif cmd == "speed" and args:
             kmh = max(0.0, float(args[0]))
             self.target_speed = kmh
             self.publish_targets()
-            # Stojąca bieżnia nie przyjmuje ani prędkości, ani nachylenia —
-            # zapamiętujemy cel i dosyłamy go po starcie.
+            # A stopped treadmill accepts neither speed nor incline — remember
+            # the target and send it after start.
             if self.running_belt:
                 await self.send_command(OP_SET_SPEED, round(kmh * 100).to_bytes(2, "little"))
         elif cmd == "incline" and args:
@@ -726,15 +735,15 @@ class Bridge:
                 await self.send_command(OP_SET_INCLINATION,
                                         round(percent * 10).to_bytes(2, "little", signed=True))
         else:
-            error(f"nieznana komenda: {line.strip()}")
+            error(f"unknown command: {line.strip()}")
 
-    # ---- pętla
+    # ---- loop
 
     async def find_device(self, patience: float = 60.0):
-        """Ciągły skan zamiast pojedynczego zapytania. Bieżnia rozgłasza się tylko
-        przez chwilę po włączeniu zasilania, więc trzeba nasłuchiwać bez przerwy
-        i wziąć ją w momencie, gdy się odezwie. BlueZ zapomina ją po rozłączeniu,
-        więc łączenie po samym adresie kończy się „device not found"."""
+        """A continuous scan instead of a one-shot query. The treadmill
+        advertises only for a moment after power-on, so we listen non-stop and
+        grab it the moment it speaks up. BlueZ forgets it after a disconnect,
+        so connecting by the address alone ends in "device not found"."""
         status("scanning")
         found = asyncio.Event()
         hit = {}
@@ -767,7 +776,8 @@ class Bridge:
         return device
 
     async def session(self) -> bool:
-        """Zwraca False, gdy bieżni nie ma w eterze — wtedy warto odczekać dłużej."""
+        """Returns False when the treadmill is not on the air — then a longer
+        wait is worthwhile."""
         device = await self.find_device()
         if device is None:
             status("not_found")
@@ -790,12 +800,12 @@ class Bridge:
             try:
                 await client.start_notify(MACHINE_STATUS, self.on_machine_status)
             except BleakError:
-                pass  # nie każda bieżnia ma status maszyny
+                pass  # not every treadmill has machine status
             if self.steps_uuid:
                 try:
                     await client.start_notify(self.steps_uuid, self.on_steps_char)
                 except BleakError as exc:
-                    error(f"nie mogę subskrybować kroków ({self.steps_uuid}): {exc}")
+                    error(f"cannot subscribe to steps ({self.steps_uuid}): {exc}")
 
             await disconnected.wait()
 
@@ -806,7 +816,7 @@ class Bridge:
         return True
 
     def on_steps_char(self, _sender, data: bytearray):
-        """Kroki z własnej charakterystyki producenta — układ ustala probe.py."""
+        """Steps from a vendor characteristic — probe.py works out the layout."""
         emit({"t": "steps_raw", "raw": bytes(data).hex(" ")})
 
     async def connection_loop(self):
@@ -818,12 +828,12 @@ class Bridge:
                 if found:
                     attempt = 0
             except (BleakError, asyncio.TimeoutError, OSError) as exc:
-                error(f"połączenie nieudane: {exc}")
+                error(f"connection failed: {exc}")
             if not found:
                 attempt += 1
-            # Bieżnia wyłączona to stan normalny, nie awaria: po kilku pustych
-            # próbach schodzimy do jednego skanu na minutę, żeby nie zajmować
-            # Bluetootha innym urządzeniom.
+            # A powered-off treadmill is the normal state, not a failure: after
+            # a few empty tries we drop to one scan a minute, so Bluetooth is
+            # not hogged from other devices.
             if attempt == 0:
                 delay = 5.0
             elif attempt < 5:
@@ -839,11 +849,11 @@ class Bridge:
         while True:
             line = await reader.readline()
             if not line:
-                return  # stdin zamknięty — shell zniknął
+                return  # stdin closed — the shell is gone
             try:
                 await self.handle_line(line.decode("utf-8", "replace"))
             except Exception as exc:
-                error(f"komenda nieudana: {exc}")
+                error(f"command failed: {exc}")
 
     async def save_loop(self):
         while True:
@@ -859,9 +869,9 @@ class Bridge:
         conn_task = asyncio.create_task(self.connection_loop())
         save_task = asyncio.create_task(self.save_loop())
         server_task = asyncio.create_task(self.server.serve()) if self.server else None
-        # Czekamy tylko na zadania, których koniec naprawdę znaczy koniec pracy:
-        # zamknięty stdin (zniknął shell) albo przerwana pętla połączeń.
-        # Serwer dla telefonu żyje obok i jego kłopoty nie mogą ubić mostu.
+        # Wait only for the tasks whose end truly means the work is done:
+        # a closed stdin (the shell is gone) or a broken connection loop.
+        # The phone server lives alongside; its troubles must not kill the bridge.
         done, pending = await asyncio.wait([stdin_task, conn_task],
                                            return_when=asyncio.FIRST_COMPLETED)
         if server_task:
@@ -874,14 +884,14 @@ class Bridge:
 
 async def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--address", help="adres bieżni; bez tego skanuje po FTMS")
-    parser.add_argument("--steps-uuid", help="charakterystyka z krokami, jeśli inna niż FTMS")
+    parser.add_argument("--address", help="treadmill address; scans for FTMS without it")
+    parser.add_argument("--steps-uuid", help="characteristic carrying steps, if different from FTMS")
     parser.add_argument("--stride", type=float, default=0.0,
-                        help="długość kroku w metrach — kroki z dystansu, gdy bieżnia ich nie podaje")
+                        help="stride length in meters — derives steps from distance when the treadmill reports none")
     parser.add_argument("--serve", metavar="HOST:PORT",
-                        help="wystaw sesje dla telefonu, np. 100.90.167.96:8787")
-    parser.add_argument("--speed", type=float, default=None, help="prędkość zadawana po starcie")
-    parser.add_argument("--incline", type=float, default=None, help="nachylenie zadawane po starcie")
+                        help="expose sessions for the phone, e.g. :8787 (bare port = the Tailscale address)")
+    parser.add_argument("--speed", type=float, default=None, help="speed to set after start")
+    parser.add_argument("--incline", type=float, default=None, help="incline to set after start")
     args = parser.parse_args()
     bridge = Bridge(args.address, args.steps_uuid, args.stride)
     bridge.target_speed = args.speed

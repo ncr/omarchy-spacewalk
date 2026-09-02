@@ -1,16 +1,12 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["bleak>=0.22"]
-# ///
-"""Rozpoznanie bieżni po Bluetooth.
+#!/usr/bin/env python3
+"""Treadmill reconnaissance over Bluetooth.
 
-Bez argumentów: skanuje i wypisuje kandydatów (nazwa, adres, reklamowane serwisy).
-Z --address: łączy się, wypisuje wszystkie serwisy i charakterystyki, subskrybuje
-każdą, która umie wysyłać powiadomienia, i loguje surowe bajty ze znacznikiem czasu.
+With no arguments: scans and lists candidates (name, address, advertised services).
+With --address: connects, lists every service and characteristic, subscribes to
+each one that can send notifications, and logs raw bytes with a timestamp.
 
-    ./probe.py                       # znajdź bieżnię
-    ./probe.py --address XX:XX:...   # podsłuchaj wszystko przez 120 s
+    ./probe.py                       # find the treadmill
+    ./probe.py --address XX:XX:...   # eavesdrop on everything for 120 s
 """
 
 import argparse
@@ -30,11 +26,11 @@ def log(*parts):
 
 
 async def scan(seconds: float):
-    log(f"Skanuję {seconds:.0f} s...")
+    log(f"Scanning for {seconds:.0f} s...")
     devices = await BleakScanner.discover(timeout=seconds, return_adv=True)
     rows = []
     for address, (device, adv) in devices.items():
-        name = adv.local_name or device.name or "(bez nazwy)"
+        name = adv.local_name or device.name or "(no name)"
         uuids = adv.service_uuids or []
         ftms = FTMS_SERVICE in [u.lower() for u in uuids]
         rows.append((ftms, name, address, uuids, adv.rssi, adv.manufacturer_data))
@@ -44,13 +40,13 @@ async def scan(seconds: float):
         mark = "  <-- FTMS" if ftms else ""
         log(f"{address}  {rssi:4d} dBm  {name}{mark}")
         if uuids:
-            log(f"    serwisy: {', '.join(uuids)}")
+            log(f"    services: {', '.join(uuids)}")
         for company, payload in (mfr or {}).items():
-            log(f"    producent 0x{company:04x}: {bytes(payload).hex(' ')}")
+            log(f"    manufacturer 0x{company:04x}: {bytes(payload).hex(' ')}")
     if not any(r[0] for r in rows):
         log("")
-        log("Żadne urządzenie nie reklamuje FTMS (0x1826). Bieżnia włączona?")
-        log("Appka Urevo w telefonie musi być zamknięta — bieżnia przyjmuje jedno połączenie.")
+        log("No device advertises FTMS (0x1826). Is the treadmill powered on?")
+        log("The Urevo app on the phone must be closed — the treadmill accepts a single connection.")
 
 
 def describe(value: bytes) -> str:
@@ -63,8 +59,8 @@ def describe(value: bytes) -> str:
 
 
 async def wait_for_device(address: str, patience: float):
-    """Bieżnia rozgłasza się tylko chwilę po obudzeniu, więc skanujemy bez przerwy
-    i bierzemy ją w momencie, gdy się odezwie."""
+    """The treadmill advertises only briefly after waking, so we scan non-stop
+    and grab it the moment it speaks up."""
     found = asyncio.Event()
     hit = {}
 
@@ -86,7 +82,7 @@ async def wait_for_device(address: str, patience: float):
 
 
 async def control(client, opcode: int, payload: bytes = b""):
-    """Jedna komenda do punktu sterowania; odpowiedź widać w logu powiadomień."""
+    """One command to the control point; the reply shows up in the notify log."""
     await client.write_gatt_char(CONTROL_POINT, bytes([opcode]) + payload, response=True)
     await asyncio.sleep(1.5)
 
@@ -103,57 +99,57 @@ async def probe(address: str, seconds: float, do_start: bool = False,
             counts[key] = counts.get(key, 0) + 1
             value = bytes(data)
             if last.get(key) == value:
-                return  # bez zmian — nie zaśmiecaj logu
+                return  # unchanged — don't clutter the log
             last[key] = value
             elapsed = time.monotonic() - start
             log(f"[{elapsed:7.2f}s] {key}  {describe(value)}")
         return handler
 
-    log(f"Czekam na {address} — naciśnij przycisk na panelu bieżni, żeby ją obudzić.")
+    log(f"Waiting for {address} — press a button on the treadmill console to wake it.")
     device = await wait_for_device(address, 180.0)
     if device is None:
-        log("Nie odezwała się przez trzy minuty.")
+        log("No sign of it for three minutes.")
         return
-    log("Znalazłem. Łączę...")
+    log("Found it. Connecting...")
     async with BleakClient(device, timeout=30.0) as client:
-        log("Połączono.\n")
-        log("=== SERWISY I CHARAKTERYSTYKI ===")
+        log("Connected.\n")
+        log("=== SERVICES AND CHARACTERISTICS ===")
         notifiable = []
         for service in client.services:
-            log(f"\nserwis {service.uuid}  {service.description}")
+            log(f"\nservice {service.uuid}  {service.description}")
             for char in service.characteristics:
                 props = ",".join(char.properties)
                 log(f"  char {char.uuid}  [{props}]  {char.description}")
                 if "read" in char.properties:
                     try:
                         value = await client.read_gatt_char(char)
-                        log(f"       odczyt: {bytes(value).hex(' ')}")
+                        log(f"       read: {bytes(value).hex(' ')}")
                     except Exception as exc:
-                        log(f"       odczyt nieudany: {exc}")
+                        log(f"       read failed: {exc}")
                 if "notify" in char.properties or "indicate" in char.properties:
                     notifiable.append(char)
 
-        log("\n=== POWIADOMIENIA ===")
-        log(f"Subskrybuję {len(notifiable)} charakterystyk. Wejdź na bieżnię i idź.")
-        log("Licz kroki na głos — potem porównamy, który licznik urósł o tyle samo.\n")
+        log("\n=== NOTIFICATIONS ===")
+        log(f"Subscribing to {len(notifiable)} characteristics. Step on the treadmill and walk.")
+        log("Count your steps out loud — later we compare which counter grew by the same amount.\n")
         for char in notifiable:
             try:
                 await client.start_notify(char, on_notify(char))
             except Exception as exc:
-                log(f"  nie udało się subskrybować {char.uuid}: {exc}")
+                log(f"  could not subscribe to {char.uuid}: {exc}")
 
         if do_start:
-            log("\nUruchamiam taśmę...")
-            await control(client, 0x00)                                        # przejmij sterowanie
+            log("\nStarting the belt...")
+            await control(client, 0x00)                                        # request control
             await control(client, 0x07)                                        # start
             await control(client, 0x03, round(incline * 10).to_bytes(2, "little", signed=True))
-            log("Start przyjęty. Wejdź na taśmę i idź, licząc kroki.\n")
-            # Prędkość zadana od razu po starcie bywa ignorowana — bieżnia
-            # rozpędza się do 1 km/h i dopiero wtedy przyjmuje cel. Stąd trzy
-            # próby w odstępach.
+            log("Start accepted. Step onto the belt and walk, counting your steps.\n")
+            # A speed set right after start tends to be ignored — the treadmill
+            # spins up to 1 km/h and only then accepts the target. Hence three
+            # spaced attempts.
             for attempt in range(3):
                 await asyncio.sleep(8.0)
-                log(f"Zadaję {speed} km/h (próba {attempt + 1})")
+                log(f"Setting {speed} km/h (attempt {attempt + 1})")
                 await control(client, 0x02, round(speed * 100).to_bytes(2, "little"))
 
         try:
@@ -162,23 +158,23 @@ async def probe(address: str, seconds: float, do_start: bool = False,
             pass
 
         if do_start:
-            log("\nZatrzymuję taśmę.")
+            log("\nStopping the belt.")
             try:
                 await control(client, 0x08, bytes([0x01]))
             except Exception as exc:
-                log(f"zatrzymanie nieudane: {exc}")
+                log(f"stop failed: {exc}")
 
-        log("\n=== PODSUMOWANIE ===")
+        log("\n=== SUMMARY ===")
         for uuid, count in sorted(counts.items(), key=lambda kv: -kv[1]):
-            log(f"{uuid}  {count} pakietów, ostatni: {last[uuid].hex(' ')}")
+            log(f"{uuid}  {count} packets, last: {last[uuid].hex(' ')}")
 
 
 async def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--address", help="adres bieżni; bez tego tylko skan")
-    parser.add_argument("--seconds", type=float, default=120.0, help="jak długo słuchać")
+    parser.add_argument("--address", help="treadmill address; scan only without it")
+    parser.add_argument("--seconds", type=float, default=120.0, help="how long to listen")
     parser.add_argument("--scan-seconds", type=float, default=12.0)
-    parser.add_argument("--start", action="store_true", help="uruchom taśmę i zatrzymaj na koniec")
+    parser.add_argument("--start", action="store_true", help="start the belt and stop it at the end")
     parser.add_argument("--speed", type=float, default=2.5)
     parser.add_argument("--incline", type=float, default=3.0)
     args = parser.parse_args()

@@ -1,0 +1,108 @@
+#!/bin/bash
+# Take one screenshot of the Spacewalk panel, the same way every time.
+#
+#   tools/panel-shot [--out FILE] [--frame WxH] [--anchor panel|right]
+#
+# The picture is a fixed frame (default 560x420 logical pixels, rendered at
+# scale 2) with the bar along the top and the open panel under it, shot on an
+# empty workspace so nothing of yours is in the background. --anchor right pins
+# the frame to the screen's right edge instead of centring on the panel, so a
+# series of shots across themes does not jump when the centred frame has to be
+# clamped at the edge.
+#
+# Needs the plugin running (omarchy-shell spacewalk dump answers), grim, and
+# Hyprland. The panel-opening IPC lives in Service.qml; a shell older than the
+# plugin needs omarchy-restart-shell first.
+set -euo pipefail
+
+FRAME_W=560
+FRAME_H=600
+SCALE=2
+
+out="" anchor=panel
+while (($#)); do
+  case "$1" in
+    --out) out="$2"; shift 2 ;;
+    --frame) FRAME_W=${2%x*}; FRAME_H=${2#*x}; shift 2 ;;
+    --anchor) anchor="$2"; shift 2 ;;
+    -h|--help) sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "panel-shot: unexpected argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+for bin in grim hyprctl omarchy-shell python3; do
+  command -v "$bin" >/dev/null || { echo "panel-shot: $bin is missing" >&2; exit 1; }
+done
+
+ipc() { omarchy-shell spacewalk "$@"; }
+
+ipc dump >/dev/null 2>&1 || { echo "panel-shot: the plugin does not answer (is it enabled?)" >&2; exit 1; }
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+[[ -n $out ]] || out="$here/docs/panel.png"
+mkdir -p "$(dirname "$out")"
+
+# Where we are, and an empty workspace to go to. A fullscreen window on the
+# current workspace means someone is watching something: switching away for a
+# screenshot would be rude. Refuse unless told otherwise.
+read -r was_ws was_full <<<"$(hyprctl activeworkspace -j | python3 -c 'import json,sys; w=json.load(sys.stdin); print(w["id"], 1 if w.get("hasfullscreen") else 0)')"
+if (( was_full )) && [[ -z ${PANEL_SHOT_FORCE:-} ]]; then
+  echo "panel-shot: the current workspace has a fullscreen window; not switching away (set PANEL_SHOT_FORCE=1 to override)" >&2
+  exit 1
+fi
+empty_ws=$(hyprctl workspaces -j | python3 -c '
+import json,sys
+used={w["id"] for w in json.load(sys.stdin) if w["windows"]>0}
+print(next(i for i in range(1,100) if i not in used))')
+focus_ws() {
+  hyprctl dispatch "hl.dsp.focus({ workspace = \"$1\" })" >/dev/null 2>&1 \
+    || hyprctl dispatch workspace "$1" >/dev/null 2>&1
+}
+
+cleanup() {
+  ipc close >/dev/null 2>&1 || true
+  focus_ws "$was_ws"
+}
+trap cleanup EXIT
+
+focus_ws "$empty_ws"
+sleep 1.2
+read -r now_ws now_windows <<<"$(hyprctl activeworkspace -j | python3 -c 'import json,sys; w=json.load(sys.stdin); print(w["id"], w["windows"])')"
+if [[ $now_ws != "$empty_ws" ]]; then
+  echo "panel-shot: could not switch to empty workspace $empty_ws (on $now_ws); not shooting" >&2
+  exit 1
+fi
+if (( now_windows > 0 )); then
+  echo "panel-shot: workspace $empty_ws has a window on it now; not shooting" >&2
+  exit 1
+fi
+ipc close >/dev/null 2>&1 || true
+ipc open >/dev/null
+sleep 1.8
+
+rect=$(ipc panelRect)
+[[ -n $rect ]] || { echo "panel-shot: the panel did not open (panelRect is empty)" >&2; exit 1; }
+read -r px py pw ph <<<"$rect"
+
+# The card's coordinates are monitor-local; grim wants global logical ones.
+read -r mx my mw <<<"$(hyprctl monitors -j | python3 -c '
+import json,sys
+ms=json.load(sys.stdin)
+m=next((m for m in ms if m.get("focused")), ms[0])
+print(m["x"], m["y"], int(m["width"]/m["scale"]))')"
+if [[ $anchor == right ]]; then
+  x=$(( mw - FRAME_W ))
+else
+  x=$(( px + pw / 2 - FRAME_W / 2 ))
+fi
+(( x < 0 )) && x=0
+(( x + FRAME_W > mw )) && x=$(( mw - FRAME_W ))
+# Shoot into a temporary file and move it in at the very end: a write inside
+# the plugin directory makes the shell reload the plugin, and that would tear
+# the panel down under the camera.
+tmp=$(mktemp --suffix=.png)
+region="$(( mx + x )),$(( my )) ${FRAME_W}x${FRAME_H}"
+grim -s "$SCALE" -g "$region" "$tmp"
+ipc close >/dev/null 2>&1 || true
+mv "$tmp" "$out"
+echo "$out"

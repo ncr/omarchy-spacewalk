@@ -1,133 +1,161 @@
-# io.github.ncr.spacewalk
+# Spacewalk
 
-Plugin do `omarchy-shell` zastępujący appkę Urevo przy bieżni **Urevo SpaceWalk 3S**.
-Na barze pokazuje kroki dnia z paskiem postępu do celu; panel dokłada kalorie, czas,
-dystans, godzinę osiągnięcia celu oraz sterowanie prędkością, nachyleniem i biegiem taśmy.
+Walk while you work, without the vendor app. Spacewalk drives a **Urevo
+SpaceWalk 3S** walking pad from the [Omarchy](https://omarchy.org) bar: today's
+steps with a progress bar toward your daily goal in the bar, and a panel with
+calories, time, distance, an estimated goal time, a day-by-day history grid,
+and speed / incline / belt control.
 
-## Jak to działa
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.webp">
+  <img src="docs/hero-light.webp" alt="The Omarchy bar with the step counter pill and the Spacewalk panel open: today's numbers, a history grid, and speed and incline controls; the picture cycles through a few Omarchy themes" width="100%">
+</picture>
 
-Dwie części gadają ze sobą przez strumień JSON, po jednej linii na aktualizację:
+## Supported treadmills
 
-- `spacewalk-bridge.py` — trzyma połączenie Bluetooth z bieżnią (standard FTMS, serwis
-  `0x1826`), pisze stan na stdout, czyta komendy ze stdin. Uruchamiany przez `uv`, więc
-  `bleak` nie musi być instalowany w systemie.
-- `Service.qml` / `BarWidget.qml` / `Panel.qml` — plugin shella. Serwis startuje razem
-  z sesją i liczy kroki cały dzień, także z zamkniętym panelem.
+Developed and verified against the **Urevo SpaceWalk 3S**. The treadmill side
+is standard Bluetooth FTMS (Fitness Machine Service, `0x1826`), so any
+FTMS-speaking pad should largely work: speed, incline (when the machine has
+it), distance, calories and time are all plain FTMS. The step counter is the
+one vendor-specific part — the SpaceWalk 3S publishes its own step count in a
+spare corner of the FTMS packet ([docs/gatt-dump.md](docs/gatt-dump.md)); on
+other pads set `strideMeters` and steps are derived from distance instead.
 
-Suma dnia leży w `~/.local/state/omarchy-spacewalk/RRRR-MM-DD.json`. Bieżnia zeruje
-własne liczniki przy każdym starcie, więc most dodaje przyrosty do sumy dnia — kilka
-sesji dziennie sumuje się w jedną liczbę.
+Got a **KingSmith WalkingPad**? Two good plugins already cover it — use one
+of those instead:
+[msegoviadev/omarchy-walkingpad](https://github.com/msegoviadev/omarchy-walkingpad)
+(steps, daily goal and a contribution graph; speaks the legacy WiLink protocol
+as well as FTMS, so it covers the A1/C1/C2/R1/S1 generation too) and
+[shllg/omarchy-walkingpad-control](https://github.com/shllg/omarchy-walkingpad-control)
+(belt control with charts and a history browser, measured against a C2).
 
-## Instalacja
+If you have some other FTMS pad and it works — or nearly works — open an
+issue and say which one; that's how the list above grows.
+
+## Requirements
+
+- Omarchy (the `omarchy-shell` Quickshell bar).
+- `python-bleak` for the Bluetooth bridge: `sudo pacman -S python-bleak`.
+  Everything else (Python, BlueZ) is already part of an Omarchy install.
+
+Everything runs locally as your user: no cloud, no account, no telemetry, and
+nothing asks for root.
+
+## Install
 
 ```bash
-omarchy-shell shell rescanPlugins
-omarchy plugin enable io.github.ncr.spacewalk
+sudo pacman -S python-bleak
+omarchy plugin add https://github.com/ncr/omarchy-spacewalk.git --enable
 ```
 
-Po każdej zmianie w plikach pluginu: **`omarchy-restart-shell`**. Samo zapisanie pliku
-przeładowuje most, ale nie kod widgetu ani panelu — zmiany w QML wchodzą dopiero po
-restarcie shella. (`omarchy-refresh-shell` to co innego: przywraca domyślny pasek
-i kasuje układ widgetów — nie używać.)
+Then add the **Spacewalk** widget to the bar from the shell's widget settings
+(Setup > Plugins). Power-cycle the treadmill so it advertises, and the widget
+picks it up.
 
-Podgląd stanu z terminala:
+## How it works
+
+Two parts talk over a stream of JSON, one line per update:
+
+- `spacewalk-bridge.py` — owns the Bluetooth link to the treadmill (FTMS),
+  writes state to stdout, reads commands from stdin.
+- `Service.qml` / `BarWidget.qml` / `Panel.qml` — the shell plugin. The
+  service starts with your session and counts steps all day, panel open or not.
+
+The day's total lives in `~/.local/state/omarchy-spacewalk/YYYY-MM-DD.json`.
+The treadmill resets its own counters on every start, so the bridge adds up
+increments — several walks a day sum into one number, and only midnight resets
+it.
+
+## Finding the treadmill
+
+The treadmill must be powered, and the **Urevo phone app closed** — the pad
+accepts one connection at a time. While you use this plugin, keep Bluetooth
+off on the phone; the app wins the race for the connection otherwise.
 
 ```bash
-omarchy-shell spacewalk dump      # stan połączenia i liczniki dnia
-omarchy-shell spacewalk start     # to samo co Start w panelu
-omarchy-shell spacewalk stop
+./probe.py                               # scan: looks for an FTMS device
+./probe.py --address XX:XX:XX:XX:XX:XX   # full characteristic dump + notification sniffing
 ```
 
-## Znalezienie bieżni
+Put the address into the widget's settings (Setup > Plugins), or straight
+into `~/.config/omarchy/shell.json` under the `io.github.ncr.spacewalk`
+entry. An empty address means "scan for FTMS on every connect" — works, but
+adds a dozen seconds to each start.
 
-Bieżnia musi być pod prądem, a **appka Urevo w telefonie zamknięta** — przyjmuje jedno
-połączenie naraz.
+## Settings
 
-```bash
-./probe.py                          # skan: szuka urządzenia z FTMS
-./probe.py --address XX:XX:XX:XX:XX:XX   # pełna lista charakterystyk + podsłuch powiadomień
-```
-
-Adres wpisz w ustawieniach widgetu (Setup > Plugins) albo wprost do `~/.config/omarchy/shell.json`
-przy wpisie `io.github.ncr.spacewalk`. Puste pole znaczy „szukaj po FTMS przy każdym połączeniu" —
-działa, ale start trwa kilkanaście sekund dłużej.
-
-## Ustawienia
-
-| Pole | Domyślnie | Znaczenie |
+| Key | Default | Meaning |
 |------|-----------|-----------|
-| `address` | puste | adres Bluetooth bieżni |
-| `dailyGoal` | 10000 | cel dzienny w krokach |
-| `startSpeed` | 2.5 | prędkość ustawiana po starcie (km/h) |
-| `startIncline` | 3 | nachylenie ustawiane po starcie |
-| `strideMeters` | 0 | długość kroku; > 0 liczy kroki z dystansu, gdy bieżnia ich nie podaje |
+| `address` | empty | the treadmill's Bluetooth address |
+| `dailyGoal` | 10000 | daily goal in steps |
+| `startSpeed` | 2.5 | speed applied after start (km/h) |
+| `startIncline` | 3 | incline applied after start (%) |
+| `strideMeters` | 0 | stride length; > 0 derives steps from distance for pads without a step counter |
+| `phonePort` | 0 | port of the Apple Health sync server; 0 keeps it off |
 
-## Obsługa
+## Using it
 
-- klik w pigułkę — panel
-- klik środkowym w pigułkę — start albo stop
-- w panelu: strzałki przy prędkości (co 0,5 km/h) i nachyleniu (co 1), Start / Zatrzymaj
+- Click the pill — the panel.
+- Middle-click the pill — start or stop the belt.
+- In the panel: arrows next to speed (0.5 km/h steps) and incline (1% steps),
+  Start / Stop, and a history grid — hover a day to see its numbers.
 
-Licznik dnia zeruje **tylko północ**. Bieżnia kasuje swoje liczniki po zatrzymaniu, a gdy
-zejdziesz z taśmy, sama ją wstrzymuje — ani jedno, ani drugie nie rusza sumy dnia, bo most
-sumuje przyrosty i rozpoznaje wyzerowanie licznika. Start wznawia wstrzymaną taśmę tak samo,
-jak startuje nową sesję, więc osobny przycisk pauzy zniknął.
+Only midnight resets the day counter. The treadmill clears its own counters
+when it stops, and pauses itself when you step off the belt — neither touches
+the day total, because the bridge sums increments and recognizes a counter
+reset. Start resumes a paused belt the same way it starts a fresh walk.
 
-Komenda `pause` została w moście (`omarchy-shell spacewalk` i stdin), po prostu nie ma
-dla niej przycisku.
+With the belt stopped the panel shows the **values to be applied on start** —
+a standing treadmill reports zeros and takes no commands, so the arrows
+remember your target and the bridge applies it once the belt is up to speed.
 
-Przy stojącej taśmie panel pokazuje wartości **po starcie** — bieżnia raportuje wtedy zera
-i nie przyjmuje komend, więc zmiana strzałkami zapamiętuje cel, a most zadaje go, gdy taśma
-się rozpędzi.
+## When it stops connecting
 
-## Gdy przestaje się łączyć
-
-SpaceWalk 3S bywa kapryśny przy wznawianiu połączenia. Most próbuje sam co 5 s, po
-dziesięciu próbach co 30 s. Gdy to nie pomaga:
-
-```bash
-bluetoothctl disconnect <adres>
-pkill -f spacewalk-bridge.py        # serwis podniesie most po ~10 s
-```
-
-Most można też uruchomić ręcznie i patrzeć, co pisze:
+The SpaceWalk 3S can be moody about reconnecting. The bridge retries by
+itself, every 5 s at first, then every 30 s after ten misses. When that is not
+enough:
 
 ```bash
-uv run --script ~/.config/omarchy/plugins/io.github.ncr.spacewalk/spacewalk-bridge.py --address <adres>
+bluetoothctl disconnect <address>
+pkill -f spacewalk-bridge.py        # the service brings the bridge back up in ~10 s
 ```
 
-Komendy wpisuje się do jego stdin: `start`, `stop`, `pause`, `speed 2.5`, `incline 3`,
+You can also run the bridge by hand and watch what it says:
+
+```bash
+python3 ~/.config/omarchy/plugins/io.github.ncr.spacewalk/spacewalk-bridge.py --address <address>
+```
+
+Commands go to its stdin: `start`, `stop`, `pause`, `speed 2.5`, `incline 3`,
 `reset-day`, `ping`.
 
-## Kroki
+## The treadmill goes to sleep
 
-Standardowy pakiet FTMS nie ma pola „kroki", ale SpaceWalk 3S dopisuje własny licznik
-w wolnym miejscu pakietu — szczegóły w [docs/gatt-dump.md](docs/gatt-dump.md). Plugin czyta
-go wprost, więc kroki są te same, które pokazuje appka producenta, razem z jej wykrywaniem
-zejścia z taśmy.
-
-Ustawienie `strideMeters` > 0 przełącza na liczenie z dystansu — zapas na wypadek innej
-bieżni, przy tej niepotrzebny.
-
-## Historia sprzed pluginu
-
-Dni od 30 czerwca do 31 sierpnia 2026 pochodzą z eksportu Apple Health — appka UREVO
-zapisywała tam kroki, dystans i kalorie z bieżni, po jednym rekordzie na dzień z przedziałem
-czasu. Te pliki mają `"source": "urevo-health"`; czas marszu jest w nich długością przedziału,
-jaki zapisała appka, więc zawiera przerwy i jest odrobinę dłuższy niż czas ruchu taśmy.
-
-31 sierpnia ma sumę obu źródeł: appka chodziła rano (10 015 kroków, 8:26–10:39), plugin
-zapisał popołudniowy test (39 kroków), przejścia się nie nakładają.
-
-## Bieżnia zasypia
-
-Bieżnia rozgłasza się tylko przez chwilę po włączeniu zasilania. Most skanuje bez przerwy
-i bierze ją, gdy się odezwie, ale jeśli przegapi to okno, trzeba pstryknąć wyłącznikiem.
-
-Telefon z appką Urevo wygrywa wyścig o połączenie — gdy się podłączy, bieżnia znika dla
-komputera. Na czas pracy z pluginem wyłącz Bluetooth w telefonie.
+The pad only advertises for a short while after power-on. The bridge scans
+continuously and grabs it the moment it speaks up, but if that window is
+missed, flip the power switch.
 
 ## Apple Health
 
-Przejścia trafiają do Zdrowia na iPhonie przez Skróty — most wystawia je pod adresem
-z Tailscale. Instrukcja: [docs/apple-health.md](docs/apple-health.md).
+Walks can flow into Health on an iPhone via Shortcuts — the bridge serves
+them on your Tailscale address when `phonePort` is set (8787 is the usual
+choice). Setup: [docs/apple-health.md](docs/apple-health.md).
+
+## Hacking on it
+
+After changing plugin files: **`omarchy-restart-shell`**. Saving a file
+reloads the bridge, but not the widget or panel QML — that needs the shell
+restart. (`omarchy-refresh-shell` is something else: it restores the default
+bar and wipes your widget layout — don't.)
+
+Peek inside from a terminal:
+
+```bash
+omarchy-shell spacewalk dump      # link state and the day's counters
+omarchy-shell spacewalk start     # same as Start in the panel
+omarchy-shell spacewalk stop
+```
+
+## License
+
+[MIT](LICENSE)

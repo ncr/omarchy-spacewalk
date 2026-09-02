@@ -1,7 +1,7 @@
 .pragma library
 
-// Liczenie postępu i przewidywanej godziny końca. Trzymane osobno od widoku,
-// żeby dało się to sprawdzić bez uruchamiania shella.
+// Progress math and the predicted finish time. Kept apart from the view so it
+// can be checked without launching the shell.
 
 function clamp(value, low, high) {
   return Math.max(low, Math.min(high, value))
@@ -16,7 +16,7 @@ function remaining(steps, goal) {
   return Math.max(0, Math.round(goal - steps))
 }
 
-// Kroki na minutę z dwóch próbek. Zwraca 0, gdy próbki nie pozwalają nic policzyć.
+// Steps per minute from two samples. Returns 0 when the samples allow no estimate.
 function paceFromSamples(older, newer) {
   if (!older || !newer) return 0
   var seconds = (newer.time - older.time) / 1000
@@ -25,15 +25,15 @@ function paceFromSamples(older, newer) {
   return steps / (seconds / 60)
 }
 
-// Kroki na minutę wyliczone z prędkości taśmy — używane, gdy nie ma jeszcze
-// dwóch próbek albo bieżnia stoi i pokazujemy prognozę dla ustawionej prędkości.
+// Steps per minute derived from belt speed — used when two samples are not in
+// yet, or the treadmill is stopped and we forecast for the set speed.
 function paceFromSpeed(speedKmh, strideMeters) {
   var stride = strideMeters > 0 ? strideMeters : 0.68
   if (!(speedKmh > 0)) return 0
   return (speedKmh * 1000 / 60) / stride
 }
 
-// Minuty do celu przy danym tempie. -1 znaczy „nie da się powiedzieć".
+// Minutes to the goal at a given pace. -1 means "cannot tell".
 function minutesToGoal(steps, goal, stepsPerMinute) {
   var left = remaining(steps, goal)
   if (left === 0) return 0
@@ -41,7 +41,7 @@ function minutesToGoal(steps, goal, stepsPerMinute) {
   return left / stepsPerMinute
 }
 
-// "15:42" — godzina osiągnięcia celu przy danym tempie. Pusty tekst, gdy nieznana.
+// "15:42" — the hour the goal is reached at a given pace. Empty text when unknown.
 function finishClock(now, minutes) {
   if (minutes < 0) return ""
   var end = new Date(now.getTime() + minutes * 60000)
@@ -69,7 +69,7 @@ function formatDuration(seconds) {
   return m + " min"
 }
 
-// Podpis pod paskiem postępu: ile zostało i o której koniec.
+// Caption under the progress bar: how much is left and when it ends.
 function goalCaption(steps, goal, stepsPerMinute, now) {
   var left = remaining(steps, goal)
   if (left === 0) return "goal reached"
@@ -80,17 +80,17 @@ function goalCaption(steps, goal, stepsPerMinute, now) {
   return text + " — done around " + clock + " (" + Math.round(minutes) + " min)"
 }
 
-// Podpis dla dnia z przeszłości — w miejscu, gdzie dla dzisiaj stoi prognoza
-// końca. Bez niego panel skakał przy każdym kliknięciu w kratkę.
+// Caption for a past day — in the spot where today shows the finish forecast.
+// Without it the panel jumped on every click on a grid cell.
 function pastDayCaption(steps, goal) {
   if (steps <= 0) return "no walking"
   if (steps >= goal) return "goal reached (" + Math.round(steps / goal * 100) + "%)"
   return formatSteps(goal - steps) + " short of the goal"
 }
 
-// ---------------------------------------------------------------- kratka dni
+// ------------------------------------------------------------------ day grid
 
-// Klucz dnia w formacie plików mostu: "2026-09-01".
+// Day key in the bridge files' format: "2026-09-01".
 function dayKey(date) {
   var m = String(date.getMonth() + 1)
   var d = String(date.getDate())
@@ -102,8 +102,8 @@ function parseKey(key) {
   return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]))
 }
 
-// Stopień wypełnienia dnia, liczony względem CELU, nie względem najlepszego dnia:
-// pełny kolor znaczy „wyrobione", a nie „więcej niż wczoraj".
+// A day's fill level, measured against the GOAL, not against the best day:
+// full color means "done", not "more than yesterday".
 function dayLevel(steps, goal) {
   if (!(steps > 0)) return 0
   var p = goal > 0 ? steps / goal : 0
@@ -113,13 +113,13 @@ function dayLevel(steps, goal) {
   return 1
 }
 
-// Dni do narysowania: tyle tygodni wstecz, żeby ostatnia kolumna kończyła się
-// na dziś, a każda kolumna zaczynała się w poniedziałek.
+// Days to draw: enough weeks back that the last column ends on today and
+// every column starts on a Monday.
 function gridDays(history, todayDate, weeks) {
   var out = []
   var end = new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate())
-  // 0 = niedziela w JS; chcemy kolumny poniedziałek–niedziela
-  var trailing = (end.getDay() + 6) % 7          // ile dni od poniedziałku
+  // 0 = Sunday in JS; we want Monday–Sunday columns
+  var trailing = (end.getDay() + 6) % 7          // days since Monday
   var lastMonday = new Date(end.getTime() - trailing * 86400000)
   var start = new Date(lastMonday.getTime() - (weeks - 1) * 7 * 86400000)
 
@@ -140,8 +140,8 @@ function gridDays(history, todayDate, weeks) {
   return out
 }
 
-// Średnia z dni, w które faktycznie chodziłeś. Dni bez marszu zaniżałyby ją tak,
-// że przestałaby cokolwiek mówić o samym chodzeniu.
+// Average over the days you actually walked. Days without a walk would drag it
+// down until it said nothing about the walking itself.
 function averageSteps(history) {
   var sum = 0, days = 0
   for (var k in history) {

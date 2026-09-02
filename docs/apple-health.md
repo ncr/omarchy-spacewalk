@@ -1,109 +1,116 @@
-# Wysyłanie przejść do Apple Health
+# Sending walks to Apple Health
 
-Apple Health nie ma publicznego API do zapisu z zewnątrz — jedyna droga bez płatnych
-aplikacji prowadzi przez **Skróty** na iPhonie i ich akcję „Zapisz próbkę zdrowia".
-Skrót pobiera przejścia z komputera po Tailscale, zapisuje je do Zdrowia i potwierdza
-odbiór, żeby to samo nie trafiło tam dwa razy.
+Apple Health has no public API for writing from the outside — the only route that avoids
+paid apps goes through **Shortcuts** on the iPhone and its "Log Health Sample" action.
+The shortcut fetches walks from the computer over Tailscale, writes them to Health, and
+acknowledges receipt so the same data doesn't land there twice.
 
-Trening jako całości (Workout) Skróty zapisać nie potrafią — idą trzy osobne próbki:
-kroki, dystans i aktywna energia. Na prawdziwy wpis treningowy trzeba płatnej aplikacji
-importującej plik `.fit`/`.tcx` (RunGap, HealthFit).
+Shortcuts can't record a workout as a whole (Workout) — three separate samples go in
+instead: steps, distance and active energy. A real workout entry requires a paid app
+that imports a `.fit`/`.tcx` file (RunGap, HealthFit).
 
-## Co wystawia komputer
+## What the computer exposes
 
-Most stawia serwer na **adresie z Tailscale** (nie na localhost, nie w sieci lokalnej),
-domyślnie port 8787. Sprawdzenie z komputera:
+The server is off until you set the `phonePort` setting (Setup > Plugins; 8787 is the
+usual choice). With a port set, the bridge listens on the **Tailscale address** (not on
+localhost, not on the local network). To check from the computer:
 
 ```bash
 curl http://$(tailscale ip -4):8787/pending
 ```
 
-| Adres | Co robi |
+| Endpoint | What it does |
 |---|---|
-| `GET /pending` | przejścia, których telefon jeszcze nie wziął |
-| `GET /ack-all` | oznacza jako wysłane to, co wydało ostatnie `/pending` |
-| `GET /ack?ids=a,b` | oznacza wskazane przejścia |
-| `GET /today` | sumy dnia, do podglądu |
+| `GET /pending` | walks the phone hasn't picked up yet |
+| `GET /ack-all` | marks as sent whatever the last `/pending` returned |
+| `GET /ack?ids=a,b` | marks the given walks |
+| `GET /today` | daily totals, for a quick look |
 
-Przejście zamyka się po 90 sekundach bez ruchu albo przy rozłączeniu z bieżnią.
-Przejścia bez ani jednego kroku (taśma kręciła się bez nikogo) nie są zapisywane.
+A walk closes after 90 seconds without movement or when the treadmill disconnects.
+Walks without a single step (the belt spinning with nobody on it) are not recorded.
 
-Wszystko leży w `~/.local/state/omarchy-spacewalk/sessions.jsonl`, po jednej linii na
-przejście, z flagą `sent`.
+Everything lives in `~/.local/state/omarchy-spacewalk/sessions.jsonl`, one line per
+walk, with a `sent` flag.
 
-## Skrót na iPhonie
+## The shortcut on the iPhone
 
-Nazwa `spawner` poniżej to nazwa komputera w tailnecie (MagicDNS). Gdyby nie działała,
-wpisz adres: `http://100.90.167.96:8787`.
+`your-computer` below is your machine's name in the tailnet (MagicDNS) — `tailscale status`
+shows it. If the name doesn't resolve, use the raw address instead:
+`http://100.x.y.z:8787`, where the address comes from `tailscale ip -4` on the computer.
 
-1. **Pobierz zawartość URL** — `http://spawner:8787/pending`
-2. **Pobierz wartość dla** `sessions` **w** Zawartość URL
-3. **Powtórz dla każdej rzeczy w** Wartość ze słownika. Najpierw wszystkie odczyty
-   z nazwanymi zmiennymi, dopiero potem zapisy — inaczej wychodzą zera (dlaczego,
-   niżej):
-   - **Pobierz wartość dla** `end_text` **w** Powtarzana rzecz
-   - **Uzyskaj daty z wejścia** ← zamienia tekst na datę. Bez niej
-     „Zarejestruj próbkę zdrowia" dostaje napis zamiast daty i skrót staje.
-   - **Ustaw zmienną** `data`
-   - **Pobierz wartość dla** `steps` → **Ustaw zmienną** `kroki`
-   - **Pobierz wartość dla** `distance_m` → **Ustaw zmienną** `metry`
-   - **Pobierz wartość dla** `kcal` → **Ustaw zmienną** `kalorie`
-   - **Zarejestruj próbkę zdrowia**: typ *Kroki*, wartość ← `kroki`, data ← `data`
-   - **Zarejestruj próbkę zdrowia**: typ *Dystans marszu i biegu*, jednostka *metry*,
-     wartość ← `metry`, data ← `data`
-   - **Zarejestruj próbkę zdrowia**: typ *Aktywna energia*, jednostka *kcal*,
-     wartość ← `kalorie`, data ← `data`
-4. Po pętli — **poza nią**, na samym końcu skrótu: **Pobierz zawartość URL**
-   → `http://spawner:8787/ack-all`
+1. **Get Contents of URL** — `http://your-computer:8787/pending`
+2. **Get Dictionary Value** for `sessions` **in** Contents of URL
+3. **Repeat with Each** item in Dictionary Value. First all the reads into named
+   variables, only then the writes — otherwise you get zeros (why, below):
+   - **Get Dictionary Value** for `end_text` **in** Repeat Item
+   - **Get Dates from Input** ← turns the text into a date. Without it
+     "Log Health Sample" receives a string instead of a date and the shortcut stalls.
+   - **Set Variable** `date`
+   - **Get Dictionary Value** for `steps` → **Set Variable** `steps`
+   - **Get Dictionary Value** for `distance_m` → **Set Variable** `meters`
+   - **Get Dictionary Value** for `kcal` → **Set Variable** `calories`
+   - **Log Health Sample**: type *Steps*, value ← `steps`, date ← `date`
+   - **Log Health Sample**: type *Walking + Running Distance*, unit *meters*,
+     value ← `meters`, date ← `date`
+   - **Log Health Sample**: type *Active Energy*, unit *kcal*,
+     value ← `calories`, date ← `date`
+4. After the loop — **outside it**, at the very end of the shortcut: **Get Contents
+   of URL** → `http://your-computer:8787/ack-all`
 
-Dwie rzeczy, na których łatwo się wyłożyć:
+Two things that are easy to trip on:
 
-- **Wartość w każdej próbce trzeba wstawić jawnie.** Zostawione puste pole bierze wejście
-  z poprzedniej akcji, a gdy poprzednia jest zapisem próbki, wejście jest puste → zero.
-- **Każde „Pobierz wartość dla" tworzy zmienną o tej samej nazwie**, więc bez nazwanych
-  zmiennych łatwo wskazać nie tę, co trzeba.
+- **The value in every sample must be set explicitly.** A field left blank takes the
+  input from the previous action, and when the previous action is a sample write, the
+  input is empty → zero.
+- **Every "Get Dictionary Value" creates a variable of the same name**, so without
+  named variables it's easy to pick the wrong one.
 
-Dystans wysyłaj w metrach: 30 m w kilometrach to 0,03 i wygląda jak zero.
+Send distance in meters: 30 m expressed in kilometers is 0.03 and looks like zero.
 
-Typu w akcji „Zarejestruj próbkę zdrowia" nie da się podać zmienną — stąd trzy osobne
-akcje. Za pierwszym uruchomieniem iOS zapyta o zgodę na zapis do Zdrowia; bez niej akcja
-kończy się błędem.
+The type in the "Log Health Sample" action can't be supplied as a variable — hence the
+three separate actions. On first run iOS asks for permission to write to Health; without
+it the action ends with an error.
 
-Każda sesja ma gotowe pola pod Skróty: `end_text` i `start_text` (data ze spacją zamiast
-`T`, bo ISO z `T` bywa nieparsowane) oraz `distance_km`, gdyby wygodniej było w kilometrach.
+Each session comes with fields ready-made for Shortcuts: `end_text` and `start_text`
+(date with a space instead of `T`, because ISO with `T` sometimes fails to parse) plus
+`distance_km`, in case kilometers are more convenient.
 
-## Gdy skrót nie działa
+## When the shortcut doesn't work
 
-Sprawdź, czy telefon w ogóle doszedł do komputera — most zapisuje każde żądanie:
+Check whether the phone reached the computer at all — the bridge logs every request:
 
 ```bash
 grep '"t":"request"' ~/.local/state/omarchy-spacewalk/bridge.log | tail
 ```
 
-Wpis z adresem telefonu i `200 OK` przy `/pending` znaczy, że sieć i serwer działają,
-a problem jest w samym skrócie. Brak wpisu po `/ack-all` znaczy, że skrót zatrzymał się
-w pętli, zanim potwierdził odbiór — najczęściej na dacie albo na braku zgody dla Zdrowia.
+An entry with the phone's address and `200 OK` on `/pending` means the network and the
+server work, and the problem is in the shortcut itself. No entry after `/ack-all` means
+the shortcut stopped inside the loop before acknowledging — most often on the date or
+on missing Health permission.
 
-## Raz na dobę, samo
+## Once a day, on its own
 
-W Skrótach → zakładka **Automatyzacja** → **+** → **Pora dnia**: godzina, **Codziennie**,
-a na dole **Uruchom natychmiast**. Bez tego ostatniego iOS tylko wyświetla powiadomienie,
-które trzeba kliknąć. Dalej → wybierz skrót. „Powiadamiaj o uruchomieniu" można wyłączyć.
+In Shortcuts → **Automation** tab → **+** → **Time of Day**: pick an hour, **Daily**,
+and at the bottom **Run Immediately**. Without that last one iOS only shows a
+notification you have to tap. Next → pick the shortcut. "Notify When Run" can be
+turned off.
 
-Godzinę dobierz pod komputer, bo to z niego lecą dane — jeśli wyłączasz go na noc,
-wczesny wieczór jest pewniejszy niż 23:00.
+Pick the hour to suit the computer, since that's where the data comes from — if you
+shut it down for the night, early evening is safer than 11 PM.
 
-Nieudana próba niczego nie psuje: przejścia zostają w kolejce, dopóki skrót ich nie
-potwierdzi, więc następne uruchomienie zabierze także zaległe. Dlatego warto dodać drugą
-automatyzację jako zapas — na przykład „gdy iPhone podłączony do ładowarki".
+A failed attempt breaks nothing: walks stay in the queue until the shortcut
+acknowledges them, so the next run picks up the backlog too. That's why a second
+automation as a backup is worth adding — for example "when iPhone is connected to
+charger".
 
-Telefon musi mieć włączony Tailscale i **ważny klucz węzła**: gdy klucz wygasa, urządzenie
-nadal widnieje na liście, ale ruch nie przechodzi i skrót kończy się przeterminowaniem.
-Sprawdzenie z komputera: `tailscale ping iphone`. Lekarstwo: zalogować się ponownie
-w aplikacji Tailscale, a na stałe — „Disable key expiry" w panelu admina.
+The phone must have Tailscale on and a **valid node key**: when the key expires, the
+device still shows in the list, but traffic doesn't pass and the shortcut ends with a
+timeout. Check from the computer: `tailscale ping iphone`. The fix: log in again in
+the Tailscale app, and to make it permanent — "Disable key expiry" in the admin panel.
 
-## Podwójne liczenie
+## Double counting
 
-Kroki z bieżni dopisują się do tego, co Zdrowie ma z innych źródeł. Przy chodzeniu
-z telefonem na biurku nie ma się co dublować. Gdybyś zaczął chodzić z iPhonem w kieszeni
-albo z Apple Watch — wyrzuć ze skrótu akcję z krokami, bo policzą się dwa razy.
+Treadmill steps add to whatever Health has from other sources. Walking with the phone
+on the desk, there's nothing to double. If you start walking with the iPhone in your
+pocket or with an Apple Watch — remove the steps action from the shortcut, or they'll
+be counted twice.
