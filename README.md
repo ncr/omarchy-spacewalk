@@ -52,6 +52,11 @@ Then add the **Spacewalk** widget to the bar from the shell's widget settings
 (Setup > Plugins). Power-cycle the treadmill so it advertises, and the widget
 picks it up.
 
+To remove it: `omarchy plugin remove io.github.ncr.spacewalk`. The day history
+stays in `~/.local/state/omarchy-spacewalk/` — delete that directory too if
+you want nothing left, and `sudo pacman -Rns python-bleak` if nothing else
+uses it.
+
 ## How it works
 
 Two parts talk over a stream of JSON, one line per update:
