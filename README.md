@@ -1,163 +1,65 @@
 # Spacewalk
 
-This drives my treadmill — a **Urevo SpaceWalk 3S** walking pad under my
-desk — from the [Omarchy](https://omarchy.org) bar, in place of the vendor's
-phone app. Written for my own setup, in the malleable computing spirit: a few
-files I can read and change. The bar shows today's steps with a progress bar
-toward the daily goal; the panel adds calories, time, distance, an estimated
-goal time, a day-by-day history grid, and speed / incline / belt control.
+This drives my treadmill — a **Urevo SpaceWalk 3S** under my desk — from the
+[Omarchy](https://omarchy.org) bar, in place of the vendor's phone app.
+Written for my own setup, in the malleable computing spirit. Steps and goal
+progress in the bar; calories, time, distance, a history grid and
+speed / incline / belt control in the panel.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.webp">
   <img src="docs/hero-light.webp" alt="The Omarchy bar with the step counter pill and the Spacewalk panel open: today's numbers, a history grid, and speed and incline controls; the picture cycles through a few Omarchy themes" width="100%">
 </picture>
 
-## Supported treadmills
-
-Developed and verified against the **Urevo SpaceWalk 3S**. The treadmill side
-is standard Bluetooth FTMS (Fitness Machine Service, `0x1826`), so any
-FTMS-speaking pad should largely work: speed, incline (when the machine has
-it), distance, calories and time are all plain FTMS. The step counter is the
-one vendor-specific part — the SpaceWalk 3S publishes its own step count in a
-spare corner of the FTMS packet ([docs/gatt-dump.md](docs/gatt-dump.md)); on
-other pads set `strideMeters` and steps are derived from distance instead.
-
-Got a **KingSmith WalkingPad**? Two good plugins already cover it — use one
-of those instead:
+Verified only on my pad, but the treadmill side is standard Bluetooth FTMS
+(`0x1826`), so others may largely work. Steps are the one vendor-specific
+part ([docs/gatt-dump.md](docs/gatt-dump.md)); `strideMeters` derives them
+from distance elsewhere. Got a **KingSmith WalkingPad**? Use
 [msegoviadev/omarchy-walkingpad](https://github.com/msegoviadev/omarchy-walkingpad)
-(steps, daily goal and a contribution graph; speaks the legacy WiLink protocol
-as well as FTMS, so it covers the A1/C1/C2/R1/S1 generation too) and
+or
 [shllg/omarchy-walkingpad-control](https://github.com/shllg/omarchy-walkingpad-control)
-(belt control with charts and a history browser, measured against a C2).
-
-## Requirements
-
-- Omarchy (the `omarchy-shell` Quickshell bar).
-- `python-bleak` for the Bluetooth bridge: `sudo pacman -S python-bleak`.
-  Everything else (Python, BlueZ) is already part of an Omarchy install.
-
-Everything runs locally as your user: no cloud, no account, no telemetry, and
-nothing asks for root.
+instead — both good.
 
 ## Install
 
 ```bash
-sudo pacman -S python-bleak
+sudo pacman -S python-bleak     # the only dependency beyond base Omarchy
 omarchy plugin add https://github.com/ncr/omarchy-spacewalk.git --enable
 ```
 
-Then add the **Spacewalk** widget to the bar from the shell's widget settings
-(Setup > Plugins). Power-cycle the treadmill so it advertises, and the widget
-picks it up.
+Add the **Spacewalk** widget to the bar (Setup > Plugins) and power-cycle the
+treadmill — it advertises only briefly, and it takes one connection at a
+time, so keep the Urevo phone app closed. `./probe.py` finds its address;
+put it in the widget settings to skip scanning on every connect.
 
-To remove it: `omarchy plugin remove io.github.ncr.spacewalk`. The day history
-stays in `~/.local/state/omarchy-spacewalk/` — delete that directory too if
-you want nothing left, and `sudo pacman -Rns python-bleak` if nothing else
-uses it.
+Remove with `omarchy plugin remove io.github.ncr.spacewalk`; the day history
+lives in `~/.local/state/omarchy-spacewalk/`.
 
-## How it works
+## Use
 
-Two parts talk over a stream of JSON, one line per update:
+Click the pill for the panel; middle-click starts or stops the belt. Only
+midnight resets the day counter — the bridge sums increments across walks, so
+the treadmill clearing its own counters on stop changes nothing. With the
+belt stopped, the panel shows the values to apply on start.
 
-- `spacewalk-bridge.py` — owns the Bluetooth link to the treadmill (FTMS),
-  writes state to stdout, reads commands from stdin.
-- `Service.qml` / `BarWidget.qml` / `Panel.qml` — the shell plugin. The
-  service starts with your session and counts steps all day, panel open or not.
+Settings: `address`, `dailyGoal` (10000), `startSpeed` (2.5 km/h),
+`startIncline` (3%), `strideMeters` (0 = steps from the treadmill),
+`phonePort` (0 = Apple Health sync off; set it — say 8787 — and walks flow to
+an iPhone over Tailscale via Shortcuts, see
+[docs/apple-health.md](docs/apple-health.md)).
 
-The day's total lives in `~/.local/state/omarchy-spacewalk/YYYY-MM-DD.json`.
-The treadmill resets its own counters on every start, so the bridge adds up
-increments — several walks a day sum into one number, and only midnight resets
-it.
+## When it sulks
 
-## Finding the treadmill
-
-The treadmill must be powered, and the **Urevo phone app closed** — the pad
-accepts one connection at a time. While you use this plugin, keep Bluetooth
-off on the phone; the app wins the race for the connection otherwise.
-
-```bash
-./probe.py                               # scan: looks for an FTMS device
-./probe.py --address XX:XX:XX:XX:XX:XX   # full characteristic dump + notification sniffing
-```
-
-Put the address into the widget's settings (Setup > Plugins), or straight
-into `~/.config/omarchy/shell.json` under the `io.github.ncr.spacewalk`
-entry. An empty address means "scan for FTMS on every connect" — works, but
-adds a dozen seconds to each start.
-
-## Settings
-
-| Key | Default | Meaning |
-|------|-----------|-----------|
-| `address` | empty | the treadmill's Bluetooth address |
-| `dailyGoal` | 10000 | daily goal in steps |
-| `startSpeed` | 2.5 | speed applied after start (km/h) |
-| `startIncline` | 3 | incline applied after start (%) |
-| `strideMeters` | 0 | stride length; > 0 derives steps from distance for pads without a step counter |
-| `phonePort` | 0 | port of the Apple Health sync server; 0 keeps it off |
-
-## Using it
-
-- Click the pill — the panel.
-- Middle-click the pill — start or stop the belt.
-- In the panel: arrows next to speed (0.5 km/h steps) and incline (1% steps),
-  Start / Stop, and a history grid — hover a day to see its numbers.
-
-Only midnight resets the day counter. The treadmill clears its own counters
-when it stops, and pauses itself when you step off the belt — neither touches
-the day total, because the bridge sums increments and recognizes a counter
-reset. Start resumes a paused belt the same way it starts a fresh walk.
-
-With the belt stopped the panel shows the **values to be applied on start** —
-a standing treadmill reports zeros and takes no commands, so the arrows
-remember your target and the bridge applies it once the belt is up to speed.
-
-## When it stops connecting
-
-The SpaceWalk 3S can be moody about reconnecting. The bridge retries by
-itself, every 5 s at first, then every 30 s after ten misses. When that is not
-enough:
-
-```bash
-bluetoothctl disconnect <address>
-pkill -f spacewalk-bridge.py        # the service brings the bridge back up in ~10 s
-```
-
-You can also run the bridge by hand and watch what it says:
+The bridge rescans and reconnects by itself. When reconnecting jams anyway:
+`bluetoothctl disconnect <address>`, `pkill -f spacewalk-bridge.py`, or flip
+the treadmill's power switch. To watch it live:
 
 ```bash
 python3 ~/.config/omarchy/plugins/io.github.ncr.spacewalk/spacewalk-bridge.py --address <address>
 ```
 
-Commands go to its stdin: `start`, `stop`, `pause`, `speed 2.5`, `incline 3`,
-`reset-day`, `ping`.
-
-## The treadmill goes to sleep
-
-The pad only advertises for a short while after power-on. The bridge scans
-continuously and grabs it the moment it speaks up, but if that window is
-missed, flip the power switch.
-
-## Apple Health
-
-Walks can flow into Health on an iPhone via Shortcuts — the bridge serves
-them on your Tailscale address when `phonePort` is set (8787 is the usual
-choice). Setup: [docs/apple-health.md](docs/apple-health.md).
-
-## Hacking on it
-
-After changing plugin files: **`omarchy-restart-shell`**. Saving a file
-reloads the bridge, but not the widget or panel QML — that needs the shell
-restart. (`omarchy-refresh-shell` is something else: it restores the default
-bar and wipes your widget layout — don't.)
-
-Peek inside from a terminal:
-
-```bash
-omarchy-shell spacewalk dump      # link state and the day's counters
-omarchy-shell spacewalk start     # same as Start in the panel
-omarchy-shell spacewalk stop
-```
+Commands on stdin: `start`, `stop`, `speed 2.5`, `incline 3`. After editing
+plugin files, `omarchy-restart-shell`; peek with `omarchy-shell spacewalk dump`.
 
 ## Who this is for
 
