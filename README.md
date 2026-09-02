@@ -156,6 +156,13 @@ omarchy-shell spacewalk start     # same as Start in the panel
 omarchy-shell spacewalk stop
 ```
 
+## Who this is for
+
+Honestly — I built this for my own desk and don't expect anyone else to run
+it, though maybe one or two people with the same pad will turn up. If that's
+you, or you just enjoy this kind of thing, follow me on
+[X](https://x.com/JacekBecela) — more of it coming.
+
 ## License
 
 [MIT](LICENSE)
