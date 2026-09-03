@@ -730,12 +730,18 @@ class Bridge:
             if self.targets_reached():
                 self.phase("running", self.running_text())
                 return
-            if self.target_speed is not None and abs(self.latest.get("speed", 0) - self.target_speed) >= 0.05:
+            # Speed all the way to target first, incline only after: incline
+            # reaches its mark in one command while speed needs a couple, so
+            # sending both at once left the incline set visibly before the
+            # speed had settled. One command per pass keeps the order clear.
+            speed_reached = (self.target_speed is None
+                             or abs(self.latest.get("speed", 0) - self.target_speed) < 0.05)
+            if not speed_reached:
                 self.phase("setting", f"setting {self.target_speed:.1f} km/h")
                 await self.send_command(OP_SET_SPEED,
                                         round(self.target_speed * 100).to_bytes(2, "little"),
                                         timeout=reply_wait)
-            if self.target_incline is not None and abs(self.latest.get("incline", 0) - self.target_incline) >= 0.05:
+            elif self.target_incline is not None and abs(self.latest.get("incline", 0) - self.target_incline) >= 0.05:
                 self.phase("setting", f"setting incline {round(self.target_incline)}")
                 await self.send_command(OP_SET_INCLINATION,
                                         round(self.target_incline * 10).to_bytes(2, "little", signed=True),
