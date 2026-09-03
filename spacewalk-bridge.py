@@ -464,6 +464,7 @@ class Bridge:
         self.connected = asyncio.Event()
         self.target_speed: float | None = None
         self.target_incline: float | None = None
+        self.targets_task: asyncio.Task | None = None
         self.session_started_at: datetime | None = None
         self.session_last_move: float = 0.0
         self.session_last_move_wall: datetime | None = None
@@ -649,8 +650,14 @@ class Bridge:
             emit({"t": "belt", "state": self.belt_state})
             self.day.save()
         elif raw[:1] == b"\x04":
+            resumed = self.belt_state == "paused"
             self.belt_state = "running"
             emit({"t": "belt", "state": self.belt_state})
+            # Stepping back on the belt resumes it, but at the treadmill's own
+            # speed and incline. The vendor app re-sent the targets silently;
+            # without this the panel user had to set them again by hand.
+            if resumed and (self.target_speed is not None or self.target_incline is not None):
+                self.kick_targets(ensure_control=True)
 
     # ---- sending
 
@@ -728,6 +735,22 @@ class Bridge:
         speed = f"{self.latest.get('speed', 0):.1f}"
         return f"running {speed} km/h, incline {round(self.latest.get('incline', 0))}"
 
+    def kick_targets(self, ensure_control: bool = False):
+        """At most one target loop at a time: a Start from the panel and the
+        0x04 status it triggers would otherwise race each other with duplicate
+        commands."""
+        if self.targets_task and not self.targets_task.done():
+            return
+        coro = self.resume_targets() if ensure_control else self.apply_targets()
+        self.targets_task = asyncio.create_task(coro)
+
+    async def resume_targets(self):
+        # Control does not survive a reconnect, and a resume can be the first
+        # command-worthy moment of a connection.
+        if not await self.request_control():
+            return
+        await self.apply_targets()
+
     async def request_control(self) -> bool:
         if self.has_control:
             return True
@@ -770,7 +793,7 @@ class Bridge:
             # out either way; apply_targets bails out when the belt stands.
             if not await self.send_command(OP_START):
                 self.phase("unconfirmed", "no reply, checking whether the belt moved")
-            asyncio.create_task(self.apply_targets())
+            self.kick_targets()
         elif cmd == "stop":
             if await self.send_command(OP_STOP, bytes([0x01])):
                 self.day.save()
