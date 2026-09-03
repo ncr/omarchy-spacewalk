@@ -40,6 +40,12 @@ Item {
   property int dayElapsedS: 0
   property int sessionElapsedS: 0
   property bool walking: false
+  // A command sent to the belt, not yet reflected in its readings. The panel
+  // throws the switch knob to `intendedWalking` at once and pulses it until
+  // the belt catches up, so a press never looks like it did nothing. The belt
+  // takes a few seconds to spin up or coast to a stop, hence the watchdog.
+  property bool commandPending: false
+  property bool intendedWalking: false
   property string lastError: ""
   // Start progress, shown in the panel. The treadmill starts with a delay and
   // accepts targets only once up to speed, so without this Start looks dead.
@@ -100,6 +106,18 @@ Item {
     if (changedTransport && bridge.running) restart()
   }
 
+  Timer {
+    id: pendingWatchdog
+    interval: 12000
+    onTriggered: root.commandPending = false
+  }
+
+  function beginCommand(wantWalking) {
+    intendedWalking = wantWalking
+    commandPending = true
+    pendingWatchdog.restart()
+  }
+
   function send(command) {
     if (!bridge.running) {
       lastError = "the bridge is not running"
@@ -117,11 +135,12 @@ Item {
   function start() {
     phaseText = "sending start..."
     phaseName = "sending"
+    beginCommand(true)
     send("start " + Number(targetSpeed).toFixed(1) + " " + Math.round(targetIncline))
   }
 
-  function stop() { send("stop") }
-  function pause() { send("pause") }
+  function stop() { phaseText = "stopping..."; beginCommand(false); send("stop") }
+  function pause() { phaseText = "pausing..."; beginCommand(false); send("pause") }
   function setSpeed(kmh) {
     targetSpeed = kmh          // immediately in the panel, even when the belt is stopped
     send("speed " + Number(kmh).toFixed(1))
@@ -150,12 +169,18 @@ Item {
     }
     if (msg.t === "status") {
       linkState = msg.state
-      if (msg.state !== "connected") walking = false
+      if (msg.state !== "connected") { walking = false; commandPending = false; pendingWatchdog.stop() }
     } else if (msg.t === "error") {
       lastError = msg.msg || ""
     } else if (msg.t === "phase") {
       phaseName = msg.phase || ""
       phaseText = msg.text || ""
+      // A start that never took, or a belt that would not spin up: stop the
+      // pulse so the switch does not wait forever.
+      if (["failed", "error", "partial"].indexOf(phaseName) !== -1) {
+        commandPending = false
+        pendingWatchdog.stop()
+      }
       // The belt-is-moving message clears itself — the rest stays, because it describes state.
       if (phaseName === "running") phaseClear.restart()
     } else if (msg.t === "history") {
@@ -168,6 +193,11 @@ Item {
     } else if (msg.t === "data") {
       applyData(msg)
     }
+  }
+
+  onWalkingChanged: if (commandPending && walking === intendedWalking) {
+    commandPending = false
+    pendingWatchdog.stop()
   }
 
   function applyData(msg) {

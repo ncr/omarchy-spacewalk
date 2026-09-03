@@ -217,7 +217,8 @@ Panel {
   }
 
   readonly property bool beltBusy: service
-    && ["sending", "control", "starting", "unconfirmed", "spinup", "setting"].indexOf(service.phaseName) !== -1
+    && (service.commandPending
+        || ["sending", "control", "starting", "unconfirmed", "spinup", "setting"].indexOf(service.phaseName) !== -1)
 
   function open() {
     openedFromHotkey = false
@@ -329,11 +330,29 @@ Panel {
             trailingControl: Component {
               ToggleSwitch {
                 id: beltSwitch
-                checked: root.service ? root.service.walking : false
+                // Optimistic: the moment you press, the knob throws to where
+                // the belt is headed, so the press is never in doubt while the
+                // treadmill takes its few seconds to react.
+                checked: root.service
+                         ? (root.service.commandPending ? root.service.intendedWalking : root.service.walking)
+                         : false
                 busy: root.beltBusy
                 interactive: root.service && root.service.connected
                 foreground: root.fg
                 onToggled: root.toggleBelt()
+
+                // The shared switch draws nothing for `busy`, so the wait shows
+                // as a pulse: it starts the instant the command goes out and
+                // stops when the belt reaches the new state.
+                opacity: 1.0
+                SequentialAnimation on opacity {
+                  running: root.service && root.service.commandPending
+                  loops: Animation.Infinite
+                  alwaysRunToEnd: true
+                  NumberAnimation { to: 0.35; duration: 450; easing.type: Easing.InOutSine }
+                  NumberAnimation { to: 1.0; duration: 450; easing.type: Easing.InOutSine }
+                  onStopped: beltSwitch.opacity = 1.0
+                }
 
                 PanelToolTip {
                   visible: beltSwitch.containsMouse
