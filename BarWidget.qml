@@ -13,6 +13,11 @@ BarWidget {
   readonly property int goal: service ? service.dailyGoal : 10000
   readonly property int steps: service ? service.daySteps : 0
   readonly property real progress: Model.progress(steps, goal)
+  // Right click flips the number between steps done and steps left to the goal.
+  // The progress bar still fills toward the goal, so a falling number beside a
+  // rising bar reads as a countdown without a label. Resets on a shell restart.
+  property bool showRemaining: false
+  readonly property int stepsRemaining: Math.max(0, goal - steps)
   // One fixed walker. A second glyph for while walking was dropped: this font
   // has no runner shape and it came out as an alien mark. What the treadmill is
   // doing shows in the panel.
@@ -91,7 +96,7 @@ BarWidget {
       // The bar holds no single line — the built-in clock sits a pixel below the
       // geometric center of the slot. We align to it: it sets the bar's rhythm.
       anchors.verticalCenterOffset: 1
-      text: Model.formatSteps(root.steps)
+      text: Model.formatSteps(root.showRemaining ? root.stepsRemaining : root.steps)
       color: root.bar ? root.bar.barForeground : Color.foreground
       font.family: root.bar ? root.bar.fontFamily : Style.font.family
       font.pixelSize: Style.font.body
@@ -142,13 +147,15 @@ BarWidget {
 
     MouseArea {
       anchors.fill: parent
-      acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+      acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
       hoverEnabled: true
       onClicked: function(mouse) {
         if (!root.service) return
         if (mouse.button === Qt.MiddleButton) {
           if (root.service.walking) root.service.stop()
           else root.service.start()
+        } else if (mouse.button === Qt.RightButton) {
+          root.showRemaining = !root.showRemaining
         } else {
           root.togglePanel()
         }
