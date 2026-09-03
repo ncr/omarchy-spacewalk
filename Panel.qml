@@ -207,11 +207,12 @@ Panel {
   }
 
   // The switch in the header replaced the button at the bottom: it starts the
-  // belt and stops it. The treadmill pauses the belt itself when you step off,
-  // and start then resumes it.
+  // belt and pauses it, so flipping it back resumes at the set speed and
+  // incline instead of ending the workout. A full stop stays on the bar
+  // widget's middle click.
   function toggleBelt() {
     if (!service) return
-    if (service.walking) service.stop()
+    if (service.walking) service.pause()
     else service.start()
   }
 
@@ -337,8 +338,10 @@ Panel {
                 PanelToolTip {
                   visible: beltSwitch.containsMouse
                   text: root.service && root.service.walking
-                        ? "stops the belt; the day count stays"
-                        : "starts at the set speed and incline"
+                        ? "pauses the belt; flip again to resume"
+                        : (root.service && root.service.paused
+                           ? "resumes at the set speed and incline"
+                           : "starts at the set speed and incline")
                   fontFamily: root.family
                 }
               }

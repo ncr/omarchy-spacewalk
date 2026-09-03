@@ -694,7 +694,7 @@ class Bridge:
                       or abs(self.latest.get("incline", 0) - self.target_incline) < 0.05)
         return speed_ok and incline_ok
 
-    async def apply_targets(self):
+    async def apply_targets(self, resume: bool = False):
         """Keeps sending speed and incline after start until the treadmill
         shows them.
 
@@ -703,17 +703,28 @@ class Bridge:
         treadmill spins up to 1 km/h and only then listens. Then every 3 s,
         with a short wait for the confirmation: no reply means "ignored", so
         there is no point waiting the full 10 s as at start.
+
+        A resume from pause skips the spin-up wait and pushes every 1.5 s
+        instead: the belt is back under way within a second or two, and the
+        targets should land before the walker settles into 1 km/h.
         """
-        self.phase("spinup", "belt is starting, waiting for it to come up to speed")
-        await asyncio.sleep(6.0)
-        for attempt in range(10):
-            await asyncio.sleep(3.0)
+        if resume:
+            self.phase("spinup", "resuming, sending speed and incline")
+        else:
+            self.phase("spinup", "belt is starting, waiting for it to come up to speed")
+            await asyncio.sleep(6.0)
+        pace = 1.5 if resume else 3.0
+        reply_wait = 2.0 if resume else 4.0
+        for attempt in range(14 if resume else 10):
+            await asyncio.sleep(pace)
             if not self.client or not self.client.is_connected:
                 self.phase("error", "the treadmill disconnected")
                 return
             # The belt stopped (the treadmill stops itself when nobody is on
             # it) — sending targets to a stopped machine yields only errors.
             if self.latest.get("speed", 0) <= 0:
+                if resume and attempt < 8:
+                    continue  # a resumed belt reports zero for a moment
                 self.phase("failed", "the belt did not start")
                 return
             if self.targets_reached():
@@ -723,25 +734,25 @@ class Bridge:
                 self.phase("setting", f"setting {self.target_speed:.1f} km/h")
                 await self.send_command(OP_SET_SPEED,
                                         round(self.target_speed * 100).to_bytes(2, "little"),
-                                        timeout=4.0)
+                                        timeout=reply_wait)
             if self.target_incline is not None and abs(self.latest.get("incline", 0) - self.target_incline) >= 0.05:
                 self.phase("setting", f"setting incline {round(self.target_incline)}")
                 await self.send_command(OP_SET_INCLINATION,
                                         round(self.target_incline * 10).to_bytes(2, "little", signed=True),
-                                        timeout=4.0)
+                                        timeout=reply_wait)
         self.phase("running" if self.targets_reached() else "partial", self.running_text())
 
     def running_text(self) -> str:
         speed = f"{self.latest.get('speed', 0):.1f}"
         return f"running {speed} km/h, incline {round(self.latest.get('incline', 0))}"
 
-    def kick_targets(self, ensure_control: bool = False):
+    def kick_targets(self, ensure_control: bool = False, resume: bool = False):
         """At most one target loop at a time: a Start from the panel and the
         0x04 status it triggers would otherwise race each other with duplicate
         commands."""
         if self.targets_task and not self.targets_task.done():
             return
-        coro = self.resume_targets() if ensure_control else self.apply_targets()
+        coro = self.resume_targets() if ensure_control else self.apply_targets(resume=resume)
         self.targets_task = asyncio.create_task(coro)
 
     async def resume_targets(self):
@@ -749,7 +760,7 @@ class Bridge:
         # command-worthy moment of a connection.
         if not await self.request_control():
             return
-        await self.apply_targets()
+        await self.apply_targets(resume=True)
 
     async def request_control(self) -> bool:
         if self.has_control:
@@ -781,6 +792,9 @@ class Bridge:
             return
 
         if cmd == "start":
+            # A start on a paused belt is a resume: the belt moves again within
+            # a second or two, so the targets go out on the fast rhythm.
+            resuming = self.belt_state == "paused"
             self.day.new_session()
             if args:
                 self.target_speed = float(args[0])
@@ -793,7 +807,7 @@ class Bridge:
             # out either way; apply_targets bails out when the belt stands.
             if not await self.send_command(OP_START):
                 self.phase("unconfirmed", "no reply, checking whether the belt moved")
-            self.kick_targets()
+            self.kick_targets(resume=resuming)
         elif cmd == "stop":
             if await self.send_command(OP_STOP, bytes([0x01])):
                 self.day.save()
