@@ -17,8 +17,10 @@ import argparse
 import asyncio
 import json
 import os
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -90,6 +92,74 @@ def status(state, **extra):
 
 def error(msg):
     emit({"t": "error", "msg": str(msg)})
+
+
+# ------------------------------------------------------------- state files
+
+# The state dir is the user's own, but the plugin should not be a lever into
+# the rest of their files: every state read refuses a swapped-in symlink
+# (O_NOFOLLOW), a planted device or directory (the regular-file and owner
+# check), and a file rigged to exhaust memory before it is parsed (the cap);
+# O_NONBLOCK keeps a planted fifo from hanging the open. Every write lands
+# through a fresh unpredictable temp file and an atomic rename, so it cannot be
+# redirected through a pre-placed name and never leaves a half-written file.
+MAX_STATE_BYTES = 8 * 1024 * 1024
+
+
+def read_state(path: Path, limit: int = MAX_STATE_BYTES) -> str | None:
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        error(f"cannot open {path}: {exc}")
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+            error(f"refusing {path}: not a regular file owned by us")
+            return None
+        chunks = []
+        remaining = limit + 1
+        while remaining > 0:
+            chunk = os.read(fd, min(65536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        data = b"".join(chunks)
+        if len(data) > limit:
+            error(f"refusing {path}: larger than the {limit} byte cap")
+            return None
+        return data.decode("utf-8", "replace")
+    finally:
+        os.close(fd)
+
+
+def write_state(path: Path, text: str):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def append_state(path: Path, text: str):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        os.write(fd, text.encode("utf-8"))
+    finally:
+        os.close(fd)
 
 
 # ------------------------------------------------------------- treadmill data
@@ -176,13 +246,14 @@ class DayTotals:
         return STATE_DIR / f"{self.day.isoformat()}.json"
 
     def load(self):
+        text = read_state(self.path)
+        if text is None:
+            return
         try:
-            raw = json.loads(self.path.read_text())
+            raw = json.loads(text)
             for f in self.FIELDS:
                 self.totals[f] = float(raw.get(f, 0))
-        except FileNotFoundError:
-            pass
-        except (ValueError, OSError) as exc:
+        except ValueError as exc:
             error(f"cannot load {self.path}: {exc}")
 
     def save(self):
@@ -192,9 +263,7 @@ class DayTotals:
             STATE_DIR.mkdir(parents=True, exist_ok=True)
             payload = {f: round(self.totals[f], 2) for f in self.FIELDS}
             payload["updated"] = datetime.now().isoformat(timespec="seconds")
-            tmp = self.path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(payload, indent=2))
-            tmp.replace(self.path)
+            write_state(self.path, json.dumps(payload, indent=2))
             self.dirty = False
         except OSError as exc:
             error(f"cannot save {self.path}: {exc}")
@@ -281,9 +350,12 @@ def read_history(days: int = HISTORY_DAYS) -> dict:
     for offset in range(days):
         day = today - timedelta(days=offset)
         path = STATE_DIR / f"{day.isoformat()}.json"
+        text = read_state(path)
+        if text is None:
+            continue
         try:
-            raw = json.loads(path.read_text())
-        except (FileNotFoundError, ValueError, OSError):
+            raw = json.loads(text)
+        except ValueError:
             continue
         out[day.isoformat()] = {
             "steps": int(float(raw.get("steps", 0))),
@@ -297,10 +369,10 @@ def read_history(days: int = HISTORY_DAYS) -> dict:
 # ---------------------------------------------------------------- phone server
 
 def read_sessions() -> list[dict]:
-    try:
-        lines = SESSIONS_PATH.read_text().splitlines()
-    except FileNotFoundError:
+    text = read_state(SESSIONS_PATH)
+    if text is None:
         return []
+    lines = text.splitlines()
     out = []
     for line in lines:
         line = line.strip()
@@ -314,9 +386,7 @@ def read_sessions() -> list[dict]:
 
 
 def write_sessions(records: list[dict]):
-    tmp = SESSIONS_PATH.with_suffix(".jsonl.tmp")
-    tmp.write_text("".join(json.dumps(r) + "\n" for r in records))
-    tmp.replace(SESSIONS_PATH)
+    write_state(SESSIONS_PATH, "".join(json.dumps(r) + "\n" for r in records))
 
 
 def mark_sent(ids: list[str]) -> int:
@@ -530,9 +600,7 @@ class Bridge:
 
     def append_session(self, record: dict):
         try:
-            STATE_DIR.mkdir(parents=True, exist_ok=True)
-            with SESSIONS_PATH.open("a") as fh:
-                fh.write(json.dumps(record) + "\n")
+            append_state(SESSIONS_PATH, json.dumps(record) + "\n")
         except OSError as exc:
             error(f"cannot save the session: {exc}")
         emit({"t": "session", **record})
@@ -550,10 +618,7 @@ class Bridge:
             "peak": self.session_peak,
         }
         try:
-            STATE_DIR.mkdir(parents=True, exist_ok=True)
-            tmp = OPEN_SESSION_PATH.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(payload))
-            tmp.replace(OPEN_SESSION_PATH)
+            write_state(OPEN_SESSION_PATH, json.dumps(payload))
         except OSError as exc:
             error(f"cannot save the open session: {exc}")
 
@@ -561,11 +626,12 @@ class Bridge:
         """A leftover open-session file means the previous bridge died
         mid-walk. Close that walk as of its last recorded movement and queue
         it for the phone."""
-        try:
-            raw = json.loads(OPEN_SESSION_PATH.read_text())
-        except FileNotFoundError:
+        text = read_state(OPEN_SESSION_PATH)
+        if text is None:
             return
-        except (ValueError, OSError) as exc:
+        try:
+            raw = json.loads(text)
+        except ValueError as exc:
             error(f"cannot read {OPEN_SESSION_PATH}: {exc}")
             return
         try:
