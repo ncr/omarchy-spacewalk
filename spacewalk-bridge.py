@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -253,7 +254,17 @@ class DayTotals:
             raw = json.loads(text)
             for f in self.FIELDS:
                 self.totals[f] = float(raw.get(f, 0))
-        except ValueError as exc:
+            # The treadmill's counters as last credited, saved together with
+            # the totals. A bridge that restarts mid-walk continues from them:
+            # the belt kept counting, so whatever the counter shows above the
+            # reference is walked distance, not a new starting point. Before
+            # this, every restart made the first reading the reference and
+            # the walk in between vanished (13 minutes on 2026-09-07).
+            ref = raw.get("session_ref") or {}
+            for f in self.FIELDS:
+                if ref.get(f) is not None:
+                    self.session[f] = float(ref[f])
+        except (ValueError, TypeError) as exc:
             error(f"cannot load {self.path}: {exc}")
 
     def save(self):
@@ -262,6 +273,8 @@ class DayTotals:
         try:
             STATE_DIR.mkdir(parents=True, exist_ok=True)
             payload = {f: round(self.totals[f], 2) for f in self.FIELDS}
+            payload["session_ref"] = {f: self.session[f] for f in self.FIELDS
+                                      if self.session[f] is not None}
             payload["updated"] = datetime.now().isoformat(timespec="seconds")
             write_state(self.path, json.dumps(payload, indent=2))
             self.dirty = False
@@ -297,10 +310,10 @@ class DayTotals:
             value = float(sample[f])
             previous = self.session[f]
             if previous is None:
-                # First reading after a start or after connecting: no telling
-                # how much of this counter was already credited, so it serves
-                # only as a reference point. Without this, pressing Start
-                # credited the previous walk's whole counter once more.
+                # First reading after a start, or the first ever today: no
+                # telling how much of this counter was already credited, so it
+                # serves only as a reference point. Without this, pressing
+                # Start credited the previous walk's whole counter once more.
                 self.session[f] = value
                 deltas[f] = 0.0
                 continue
@@ -908,11 +921,38 @@ class Bridge:
 
     # ---- loop
 
+    async def release_stale_link(self):
+        """A bridge that died without saying goodbye (SIGKILL, a crash) leaves
+        its link open in BlueZ. The treadmill does not advertise while it has
+        a connection, so a scan would never find it — the previous bridge
+        scanned for 13 minutes on 2026-09-07. Drop the link first; the
+        treadmill starts advertising within seconds."""
+        if not self.address:
+            return
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "bluetoothctl", "info", self.address,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            out, _ = await asyncio.wait_for(proc.communicate(), 10.0)
+        except (OSError, asyncio.TimeoutError):
+            return
+        if b"Connected: yes" not in out:
+            return
+        status("releasing", address=self.address)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "bluetoothctl", "disconnect", self.address,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            await asyncio.wait_for(proc.wait(), 15.0)
+        except (OSError, asyncio.TimeoutError) as exc:
+            error(f"could not release the stale link to {self.address}: {exc}")
+
     async def find_device(self, patience: float = 60.0):
         """A continuous scan instead of a one-shot query. The treadmill
         advertises only for a moment after power-on, so we listen non-stop and
         grab it the moment it speaks up. BlueZ forgets it after a disconnect,
         so connecting by the address alone ends in "device not found"."""
+        await self.release_stale_link()
         status("scanning")
         found = asyncio.Event()
         hit = {}
@@ -961,7 +1001,11 @@ class Bridge:
         async with BleakClient(device, timeout=30.0, disconnected_callback=on_disconnect) as client:
             self.client = client
             self.has_control = False
-            self.day.new_session()
+            # No new_session() here: the reference survives a reconnect on
+            # purpose. If the belt ran on while we were away, the counters are
+            # higher than the reference by exactly what was walked meanwhile,
+            # and the next reading credits it. A counter below the reference
+            # means the treadmill was restarted, and update() counts from zero.
             status("connected", address=address)
 
             await client.start_notify(TREADMILL_DATA, self.on_treadmill_data)
@@ -1040,16 +1084,31 @@ class Bridge:
         conn_task = asyncio.create_task(self.connection_loop())
         save_task = asyncio.create_task(self.save_loop())
         server_task = asyncio.create_task(self.server.serve()) if self.server else None
+        # The shell stops the bridge with a signal on every plugin reload.
+        # Python's default for SIGTERM ends the process on the spot, link and
+        # all: BlueZ kept the treadmill connected, the treadmill stopped
+        # advertising, and the next bridge could not find it. So the signal
+        # only sets an event, and the shutdown below says goodbye properly.
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            loop.add_signal_handler(sig, stop.set)
+        stop_task = asyncio.create_task(stop.wait())
         # Wait only for the tasks whose end truly means the work is done:
-        # a closed stdin (the shell is gone) or a broken connection loop.
-        # The phone server lives alongside; its troubles must not kill the bridge.
-        done, pending = await asyncio.wait([stdin_task, conn_task],
-                                           return_when=asyncio.FIRST_COMPLETED)
-        if server_task:
-            server_task.cancel()
-        save_task.cancel()
-        for task in pending:
+        # a closed stdin (the shell is gone), a broken connection loop, or
+        # the stop signal. The phone server lives alongside; its troubles
+        # must not kill the bridge.
+        done, _ = await asyncio.wait([stdin_task, conn_task, stop_task],
+                                     return_when=asyncio.FIRST_COMPLETED)
+        if stop_task in done:
+            status("stopping")
+        tasks = [t for t in (stdin_task, conn_task, stop_task, save_task, server_task) if t]
+        for task in tasks:
             task.cancel()
+        # Cancelling the connection task unwinds `async with BleakClient`,
+        # which asks BlueZ to drop the link. That takes a moment — leaving
+        # before it is done keeps the link open just like a kill would.
+        await asyncio.wait(tasks, timeout=5.0)
         self.close_session()
         self.day.save()
 
