@@ -66,6 +66,7 @@ RESULT_NAMES = {
 LOG_PATH = STATE_DIR / "bridge.log"
 SESSIONS_PATH = STATE_DIR / "sessions.jsonl"
 OPEN_SESSION_PATH = STATE_DIR / "session-open.json"
+TARGETS_PATH = STATE_DIR / "targets.json"
 
 # After this many seconds without movement the walk counts as finished. The
 # treadmill stops itself when nobody is standing on it, so a short break to fix
@@ -161,6 +162,28 @@ def append_state(path: Path, text: str):
         os.write(fd, text.encode("utf-8"))
     finally:
         os.close(fd)
+
+
+# ------------------------------------------------------------------ targets
+
+def load_targets(defaults: dict) -> dict:
+    """The last speed and incline the walker chose, if they were chosen under
+    the same settings. The bridge used to start from the settings every time,
+    so a plugin reload put the panel back to 3 % while the belt stood at 0 —
+    and the next start raised it for real. A changed setting still wins: it
+    is the one thing the walker changed on purpose since."""
+    text = read_state(TARGETS_PATH)
+    if text is None:
+        return defaults
+    try:
+        raw = json.loads(text)
+        if raw.get("defaults") != defaults:
+            return defaults
+        return {"speed": raw.get("speed", defaults["speed"]),
+                "incline": raw.get("incline", defaults["incline"])}
+    except (ValueError, TypeError, AttributeError) as exc:
+        error(f"cannot read {TARGETS_PATH}: {exc}")
+        return defaults
 
 
 # ------------------------------------------------------------- treadmill data
@@ -547,7 +570,15 @@ class Bridge:
         self.connected = asyncio.Event()
         self.target_speed: float | None = None
         self.target_incline: float | None = None
+        self.target_defaults: dict = {}
+        self.targets_saved: dict | None = None
         self.targets_task: asyncio.Task | None = None
+        # While a start or a target loop drives the belt, readings are on
+        # their way somewhere and say nothing about the walker's wishes.
+        self.busy_phase = False
+        # After a panel command the belt takes a few seconds to follow; until
+        # then a reading that differs from the target is lag, not a choice.
+        self.hold_until = 0.0
         self.session_started_at: datetime | None = None
         self.session_last_move: float = 0.0
         self.session_last_move_wall: datetime | None = None
@@ -672,8 +703,50 @@ class Bridge:
         after start."""
         emit({"t": "targets", "target_speed": self.target_speed,
               "target_incline": self.target_incline})
+        self.save_targets()
+
+    def save_targets(self):
+        record = {"speed": self.target_speed, "incline": self.target_incline,
+                  "defaults": self.target_defaults}
+        if record == self.targets_saved:
+            return
+        try:
+            write_state(TARGETS_PATH, json.dumps(record))
+            self.targets_saved = record
+        except OSError as exc:
+            error(f"cannot save the targets: {exc}")
+
+    def adopt_targets(self, sample: dict):
+        """The treadmill's own console changes speed and incline behind our
+        back. While the belt runs and nothing of ours is driving it, a reading
+        that differs from the target is the walker's choice: it becomes the
+        target, so the panel shows what the belt does and a resume does not
+        put the old value back."""
+        if self.busy_phase or time.monotonic() < self.hold_until:
+            return
+        if self.targets_task and not self.targets_task.done():
+            return
+        if sample.get("speed", 0) <= 0:
+            return
+        changed = False
+        speed = sample.get("speed")
+        if (speed is not None and self.target_speed is not None
+                and abs(speed - self.target_speed) >= 0.05):
+            self.target_speed = round(speed, 1)
+            changed = True
+        incline = sample.get("incline")
+        if (incline is not None and self.target_incline is not None
+                and abs(incline - self.target_incline) >= 0.05):
+            self.target_incline = round(incline, 1)
+            changed = True
+        if changed:
+            self.publish_targets()
+
+    def hold_targets(self, seconds: float = 8.0):
+        self.hold_until = time.monotonic() + seconds
 
     def phase(self, name: str, text: str):
+        self.busy_phase = name in ("control", "starting", "unconfirmed", "spinup", "setting")
         """Start progress for the panel. The treadmill starts with a delay,
         confirms commands seconds later and accepts targets only once up to
         speed — without this the Start button looks like it did nothing."""
@@ -697,6 +770,7 @@ class Bridge:
             sample["steps"] = steps
         applied = self.day.update(sample) or {}
         self.latest = sample
+        self.adopt_targets(sample)
         self.track_session(applied)
         payload = {"t": "data"}
         payload.update({k: round(v, 2) if isinstance(v, float) else v
@@ -904,6 +978,7 @@ class Bridge:
         elif cmd == "speed" and args:
             kmh = max(0.0, float(args[0]))
             self.target_speed = kmh
+            self.hold_targets()
             self.publish_targets()
             # A stopped treadmill accepts neither speed nor incline — remember
             # the target and send it after start.
@@ -912,6 +987,7 @@ class Bridge:
         elif cmd == "incline" and args:
             percent = float(args[0])
             self.target_incline = percent
+            self.hold_targets()
             self.publish_targets()
             if self.running_belt:
                 await self.send_command(OP_SET_INCLINATION,
@@ -1125,8 +1201,10 @@ async def main():
     parser.add_argument("--incline", type=float, default=None, help="incline to set after start")
     args = parser.parse_args()
     bridge = Bridge(args.address, args.steps_uuid, args.stride)
-    bridge.target_speed = args.speed
-    bridge.target_incline = args.incline
+    bridge.target_defaults = {"speed": args.speed, "incline": args.incline}
+    targets = load_targets(bridge.target_defaults)
+    bridge.target_speed = targets["speed"]
+    bridge.target_incline = targets["incline"]
     if args.serve:
         host, _, port = args.serve.rpartition(":")
         bridge.server = PhoneServer(host or tailscale_ip(), int(port))
