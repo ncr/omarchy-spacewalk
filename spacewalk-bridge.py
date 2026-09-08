@@ -15,6 +15,7 @@ Reads one command per line from stdin:
 
 import argparse
 import asyncio
+import fcntl
 import json
 import os
 import signal
@@ -76,8 +77,12 @@ SESSION_IDLE_GAP = 90
 
 def emit(obj):
     line = json.dumps(obj, separators=(",", ":"))
-    sys.stdout.write(line + "\n")
-    sys.stdout.flush()
+    try:
+        sys.stdout.write(line + "\n")
+        sys.stdout.flush()
+    except BrokenPipeError:
+        # A vanished UI must not interrupt checkpointing or BLE cleanup.
+        pass
     # Copy to a file: the shell consumes the bridge's stdout, so without this
     # there is no way to see what the treadmill says while the plugin runs.
     try:
@@ -147,6 +152,11 @@ def write_state(path: Path, text: str):
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     except OSError:
         try:
             os.unlink(tmp)
@@ -159,7 +169,10 @@ def append_state(path: Path, text: str):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
-        os.write(fd, text.encode("utf-8"))
+        data = text.encode("utf-8")
+        while data:
+            data = data[os.write(fd, data):]
+        os.fsync(fd)
     finally:
         os.close(fd)
 
@@ -292,7 +305,7 @@ class DayTotals:
 
     def save(self):
         if not self.dirty:
-            return
+            return True
         try:
             STATE_DIR.mkdir(parents=True, exist_ok=True)
             payload = {f: round(self.totals[f], 2) for f in self.FIELDS}
@@ -301,8 +314,10 @@ class DayTotals:
             payload["updated"] = datetime.now().isoformat(timespec="seconds")
             write_state(self.path, json.dumps(payload, indent=2))
             self.dirty = False
+            return True
         except OSError as exc:
             error(f"cannot save {self.path}: {exc}")
+            return False
 
     def roll_over_if_needed(self):
         today = date.today()
@@ -338,12 +353,15 @@ class DayTotals:
                 # serves only as a reference point. Without this, pressing
                 # Start credited the previous walk's whole counter once more.
                 self.session[f] = value
+                self.dirty = True
                 deltas[f] = 0.0
                 continue
             if value < previous:
                 # The treadmill zeroed the counter — count from zero.
                 previous = 0.0
             deltas[f] = value - previous
+            if self.session[f] != value:
+                self.dirty = True
             self.session[f] = value
 
         if deltas.get("steps", 0) <= 0:
@@ -772,6 +790,12 @@ class Bridge:
         self.latest = sample
         self.adopt_targets(sample)
         self.track_session(applied)
+        # Commit before publishing: a displayed gain survives a hard kill.
+        saved = self.day.save()
+        if applied:
+            self.persist_open_session()
+        if not saved:
+            return  # Never advertise a total which failed to reach disk.
         payload = {"t": "data"}
         payload.update({k: round(v, 2) if isinstance(v, float) else v
                         for k, v in sample.items() if v is not None})
@@ -954,7 +978,8 @@ class Bridge:
             # A start on a paused belt is a resume: the belt moves again within
             # a second or two, so the targets go out on the fast rhythm.
             resuming = self.belt_state == "paused"
-            self.day.new_session()
+            # Starting/resuming is not a counter reset. Keep the last credited
+            # reading; update() detects the treadmill's actual reset to zero.
             if args:
                 self.target_speed = float(args[0])
             if len(args) > 1:
@@ -1074,34 +1099,38 @@ class Bridge:
         def on_disconnect(_client):
             disconnected.set()
 
-        async with BleakClient(device, timeout=30.0, disconnected_callback=on_disconnect) as client:
-            self.client = client
-            self.has_control = False
-            # No new_session() here: the reference survives a reconnect on
-            # purpose. If the belt ran on while we were away, the counters are
-            # higher than the reference by exactly what was walked meanwhile,
-            # and the next reading credits it. A counter below the reference
-            # means the treadmill was restarted, and update() counts from zero.
-            status("connected", address=address)
+        try:
+            async with BleakClient(device, timeout=30.0, disconnected_callback=on_disconnect) as client:
+                self.client = client
+                self.has_control = False
+                # No new_session() here: the reference survives a reconnect on
+                # purpose. If the belt ran on while we were away, the counters are
+                # higher than the reference by exactly what was walked meanwhile,
+                # and the next reading credits it. A counter below the reference
+                # means the treadmill was restarted, and update() counts from zero.
+                status("connected", address=address)
 
-            await client.start_notify(TREADMILL_DATA, self.on_treadmill_data)
-            await client.start_notify(CONTROL_POINT, self.on_control_reply)
-            try:
-                await client.start_notify(MACHINE_STATUS, self.on_machine_status)
-            except BleakError:
-                pass  # not every treadmill has machine status
-            if self.steps_uuid:
+                await client.start_notify(TREADMILL_DATA, self.on_treadmill_data)
+                await client.start_notify(CONTROL_POINT, self.on_control_reply)
                 try:
-                    await client.start_notify(self.steps_uuid, self.on_steps_char)
-                except BleakError as exc:
-                    error(f"cannot subscribe to steps ({self.steps_uuid}): {exc}")
+                    await client.start_notify(MACHINE_STATUS, self.on_machine_status)
+                except BleakError:
+                    pass  # not every treadmill has machine status
+                if self.steps_uuid:
+                    try:
+                        await client.start_notify(self.steps_uuid, self.on_steps_char)
+                    except BleakError as exc:
+                        error(f"cannot subscribe to steps ({self.steps_uuid}): {exc}")
 
-            await disconnected.wait()
+                await disconnected.wait()
 
-        self.client = None
-        self.close_session()
-        self.day.save()
-        status("disconnected")
+        finally:
+            self.client = None
+            self.has_control = False
+            self.connected.clear()
+            self.day.save()
+            self.close_session()
+            status("disconnected")
         return True
 
     def on_steps_char(self, _sender, data: bytearray):
@@ -1176,6 +1205,9 @@ class Bridge:
         # must not kill the bridge.
         done, _ = await asyncio.wait([stdin_task, conn_task, stop_task],
                                      return_when=asyncio.FIRST_COMPLETED)
+        # Save first, before any output or potentially slow BLE cleanup.
+        self.day.save()
+        self.persist_open_session()
         if stop_task in done:
             status("stopping")
         tasks = [t for t in (stdin_task, conn_task, stop_task, save_task, server_task) if t]
@@ -1200,6 +1232,15 @@ async def main():
     parser.add_argument("--speed", type=float, default=None, help="speed to set after start")
     parser.add_argument("--incline", type=float, default=None, help="incline to set after start")
     args = parser.parse_args()
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(STATE_DIR / "bridge.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(lock_fd)
+        error("another Spacewalk bridge already owns the connection")
+        return
+    # Keep this descriptor alive until process exit, before loading counters.
     bridge = Bridge(args.address, args.steps_uuid, args.stride)
     bridge.target_defaults = {"speed": args.speed, "incline": args.incline}
     targets = load_targets(bridge.target_defaults)
@@ -1208,7 +1249,9 @@ async def main():
     if args.serve:
         host, _, port = args.serve.rpartition(":")
         bridge.server = PhoneServer(host or tailscale_ip(), int(port))
+    emit({"t": "lifecycle", "event": "started", "pid": os.getpid()})
     await bridge.run()
+    emit({"t": "lifecycle", "event": "stopped", "pid": os.getpid()})
 
 
 if __name__ == "__main__":

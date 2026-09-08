@@ -35,6 +35,14 @@ put it in the widget settings to skip scanning on every connect.
 Remove with `omarchy plugin remove io.github.ncr.spacewalk`; the day history
 lives in `~/.local/state/omarchy-spacewalk/`.
 
+The plugin starts its own transient **user** service on first activation.
+No root access, service installation, or enable command is needed. Removing
+the plugin automatically disconnects Bluetooth and stops the service within
+about eight seconds; systemd then discards its registration. A brief plugin
+update or UI reload does not stop it. Step history is retained. At the next
+login the enabled plugin starts the service again. Installing the existing
+`python-bleak` system dependency still uses the package manager as shown above.
+
 ## Use
 
 Click the pill for the panel; middle-click starts or stops the belt. Only
@@ -50,16 +58,29 @@ an iPhone over Tailscale via Shortcuts, see
 
 ## When it sulks
 
-The bridge rescans and reconnects by itself. When reconnecting jams anyway:
-`bluetoothctl disconnect <address>`, `pkill -f spacewalk-bridge.py`, or flip
-the treadmill's power switch. To watch it live:
+The Bluetooth bridge runs under `omarchy-spacewalk.service`, independently of
+the bar. Reloading any plugin only replaces the UI client. A private Unix
+socket carries events and commands; one locked bridge owns the connection.
+Each incoming counter update is written atomically and synced before the UI
+receives the new total, including a treadmill counter resetting to zero.
+
+The bridge rescans and reconnects by itself. Inspect it with:
 
 ```bash
-python3 ~/.config/omarchy/plugins/io.github.ncr.spacewalk/spacewalk-bridge.py --address <address>
+systemctl --user status omarchy-spacewalk.service
+journalctl --user -u omarchy-spacewalk.service -f
+tail -f ~/.local/state/omarchy-spacewalk/bridge.log
+omarchy-shell spacewalk dump
 ```
 
-Commands on stdin: `start`, `stop`, `speed 2.5`, `incline 3`. After editing
-plugin files, `omarchy-restart-shell`; peek with `omarchy-shell spacewalk dump`.
+If necessary, `systemctl --user restart omarchy-spacewalk.service` reconnects
+Bluetooth without sending a belt start/stop command. UI files hot-reload;
+restart the service after editing Python backend code. Avoid power-cycling a
+running treadmill to repair a connection: it can erase counters the computer
+has not received yet. Already persisted steps survive either restart.
+
+Regression checks: `python3 -m unittest -v test_spacewalk.py` (uses a fake
+bridge, temporary state and a local Unix socket; does not control the belt).
 
 ## Who this is for
 

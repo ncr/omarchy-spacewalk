@@ -77,7 +77,7 @@ Item {
 
   readonly property string scriptPath: {
     var dir = String(Qt.resolvedUrl("."))
-    return dir.replace(/^file:\/\//, "") + "spacewalk-bridge.py"
+    return dir.replace(/^file:\/\//, "") + "spacewalk-service.py"
   }
 
   function applySettings(settings) {
@@ -153,7 +153,7 @@ Item {
 
   function restart() {
     bridge.running = false
-    bridge.running = true
+    connectDelay.restart()
   }
 
   function handleLine(line) {
@@ -234,7 +234,15 @@ Item {
   // Started only after the object is built: with `running: true` written
   // directly, the process launches before stdout gets its SplitParser, and the
   // first (in practice, all) lines are lost.
-  Component.onCompleted: bridge.running = true
+  Component.onCompleted: connectDelay.restart()
+
+  // Let the bar inject settings before attaching; default transport arguments
+  // during construction must not reconfigure the persistent BLE service.
+  Timer {
+    id: connectDelay
+    interval: 250
+    onTriggered: bridge.running = true
+  }
 
   // State inspection from the terminal: `omarchy-shell spacewalk state`.
   // console.log from a user plugin does not reach the system journal, so this
