@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "shared" as Shared
 import "Model.js" as Model
 
 // Pill on the bar: a thin progress bar toward the goal, and under it the walker
@@ -9,7 +10,7 @@ BarWidget {
   id: root
   moduleName: "io.github.ncr.spacewalk"
 
-  readonly property var service: bar && bar.shell ? bar.shell.serviceFor("io.github.ncr.spacewalk") : null
+  readonly property var service: Shared.ServiceRegistry.service
   readonly property int goal: service ? service.dailyGoal : 10000
   readonly property int steps: service ? service.daySteps : 0
   readonly property real progress: Model.progress(steps, goal)

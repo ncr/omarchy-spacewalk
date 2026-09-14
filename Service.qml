@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import "shared" as Shared
 
 // Keeps the treadmill bridge alive for the whole session, regardless of whether
 // the panel is open. The shell mounts this file at startup (shell.qml:_syncServices)
@@ -234,7 +235,13 @@ Item {
   // Started only after the object is built: with `running: true` written
   // directly, the process launches before stdout gets its SplitParser, and the
   // first (in practice, all) lines are lost.
-  Component.onCompleted: connectDelay.restart()
+  Component.onCompleted: {
+    Shared.ServiceRegistry.service = root
+    connectDelay.restart()
+  }
+  Component.onDestruction: {
+    if (Shared.ServiceRegistry.service === root) Shared.ServiceRegistry.service = null
+  }
 
   // Let the bar inject settings before attaching; default transport arguments
   // during construction must not reconfigure the persistent BLE service.
