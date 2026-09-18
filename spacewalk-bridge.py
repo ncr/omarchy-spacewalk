@@ -535,10 +535,10 @@ def mark_sent(ids: list[str]) -> int:
     return changed
 
 
-def tailscale_ip() -> str:
-    """This machine's address in the tailnet. Without it there is nowhere to
-    bind the server so that the phone sees it and the rest of the network does
-    not."""
+def tailscale_ip() -> str | None:
+    """This machine's address in the tailnet, or None while Tailscale has not
+    come up yet. Without it there is nowhere to bind the server so that the
+    phone sees it and the rest of the network does not."""
     try:
         out = subprocess.run(["tailscale", "ip", "-4"], capture_output=True,
                              text=True, timeout=5).stdout.strip().splitlines()
@@ -546,8 +546,7 @@ def tailscale_ip() -> str:
             return out[0].strip()
     except (OSError, subprocess.SubprocessError):
         pass
-    error("no Tailscale address — the server will only listen on localhost")
-    return "127.0.0.1"
+    return None
 
 
 class PhoneServer:
@@ -561,7 +560,11 @@ class PhoneServer:
     exposes nothing to the local network or the internet.
     """
 
-    def __init__(self, host: str, port: int):
+    def __init__(self, host: str | None, port: int):
+        # None: bind the Tailscale address once Tailscale has one. At boot the
+        # bridge starts before tailscaled hands out the address; binding
+        # localhost then would leave the phone unable to reach it until the
+        # next restart.
         self.host = host
         self.port = port
         # What the last /pending handed out — so the shortcut can confirm
@@ -635,6 +638,15 @@ class PhoneServer:
         return "404 Not Found", {"error": "no such path"}
 
     async def serve(self):
+        waited = 0
+        while self.host is None:
+            self.host = tailscale_ip()
+            if self.host is not None:
+                break
+            if waited % 60 == 0:
+                error("no Tailscale address yet — waiting before binding the phone server")
+            await asyncio.sleep(5.0)
+            waited += 5
         # Retry instead of giving up: after a shell restart the previous bridge
         # can hold the port a moment longer, and finishing this task used to
         # kill the whole bridge (run() ends on the first completed task).
@@ -1331,7 +1343,7 @@ async def main():
     bridge.target_incline = targets["incline"]
     if args.serve:
         host, _, port = args.serve.rpartition(":")
-        bridge.server = PhoneServer(host or tailscale_ip(), int(port))
+        bridge.server = PhoneServer(host or None, int(port))
     emit({"t": "lifecycle", "event": "started", "pid": os.getpid()})
     await bridge.run()
     emit({"t": "lifecycle", "event": "stopped", "pid": os.getpid()})
