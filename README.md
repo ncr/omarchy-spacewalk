@@ -97,9 +97,13 @@ The bridge rescans and reconnects by itself. Inspect it with:
 ```bash
 systemctl --user status omarchy-spacewalk.service
 journalctl --user -u omarchy-spacewalk.service -f
-tail -f ~/.local/state/omarchy-spacewalk/bridge.log
+tail -F ~/.local/state/omarchy-spacewalk/bridge.log
 omarchy-shell spacewalk dump
 ```
+
+`bridge.log` is capped: past 5 MB it becomes `bridge.log.1` (replacing the
+previous one) and a new file starts, hence `tail -F`. On startup the bridge
+also removes `*.tmp` leftovers of interrupted state writes older than an hour.
 
 If necessary, `systemctl --user restart omarchy-spacewalk.service` reconnects
 Bluetooth without sending a belt start/stop command. UI files hot-reload;

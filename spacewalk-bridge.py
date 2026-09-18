@@ -88,6 +88,37 @@ TARGETS_PATH = STATE_DIR / "targets.json"
 # something at the desk should not split a walk into two sessions.
 SESSION_IDLE_GAP = 90
 
+# bridge.log gets about one line a second while the treadmill is connected and
+# nothing else trims it (70 MB by 2026-09-18). Past this size it becomes
+# bridge.log.1, replacing the previous one, so both never exceed twice the cap.
+LOG_MAX_BYTES = 5 * 1024 * 1024
+
+# Size of bridge.log as this process knows it: measured once, then advanced by
+# what is written, so a line does not cost a stat. None means "measure again".
+log_bytes = None
+
+
+def append_log(text: str):
+    global log_bytes
+    data = text.encode("utf-8")
+    try:
+        if log_bytes is None:
+            try:
+                log_bytes = os.lstat(LOG_PATH).st_size
+            except FileNotFoundError:
+                log_bytes = 0
+        if log_bytes > 0 and log_bytes + len(data) > LOG_MAX_BYTES:
+            os.replace(LOG_PATH, LOG_PATH.with_name(LOG_PATH.name + ".1"))
+            log_bytes = 0
+        with LOG_PATH.open("ab") as fh:
+            fh.write(data)
+        log_bytes += len(data)
+    except OSError:
+        # The file may have been moved or removed under us; the count is no
+        # longer trustworthy, so the next line measures it afresh.
+        log_bytes = None
+        raise
+
 
 def emit(obj, log=True):
     line = json.dumps(obj, separators=(",", ":"))
@@ -103,8 +134,7 @@ def emit(obj, log=True):
     # there is no way to see what the treadmill says while the plugin runs.
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        with LOG_PATH.open("a") as fh:
-            fh.write(f"{datetime.now().isoformat(timespec='seconds')} {line}\n")
+        append_log(f"{datetime.now().isoformat(timespec='seconds')} {line}\n")
     except OSError:
         pass
 
@@ -191,6 +221,55 @@ def append_state(path: Path, text: str):
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+# A bridge killed between mkstemp and os.replace in write_state() leaves its
+# temp file behind for good (50 copies of targets.json.*.tmp from 2026-09-08).
+# Anything younger than this may still belong to a write in progress.
+STALE_TEMP_SECONDS = 3600
+
+
+def is_state_temp_name(name: str) -> bool:
+    """True only for the names write_state() makes: <state file>.<random>.tmp.
+    Everything else in the state dir is the walker's history and stays."""
+    if not name.endswith(".tmp"):
+        return False
+    target, _, random_part = name[:-len(".tmp")].rpartition(".")
+    if not target or not random_part:
+        return False
+    if target in (TARGETS_PATH.name, SESSIONS_PATH.name, OPEN_SESSION_PATH.name):
+        return True
+    day, _, suffix = target.rpartition(".")
+    if suffix != "json" or len(day) != 10:
+        return False
+    try:
+        date.fromisoformat(day)
+    except ValueError:
+        return False
+    return True
+
+
+def remove_stale_temp_files() -> int:
+    removed = 0
+    try:
+        entries = list(os.scandir(STATE_DIR))
+    except OSError:
+        return 0
+    now = time.time()
+    for entry in entries:
+        if not is_state_temp_name(entry.name):
+            continue
+        try:
+            st = entry.stat(follow_symlinks=False)
+            if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+                continue
+            if now - st.st_mtime < STALE_TEMP_SECONDS:
+                continue
+            os.unlink(entry.path)
+            removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 # ------------------------------------------------------------------ targets
@@ -793,10 +872,10 @@ def mark_sent(ids: list[str]) -> int:
     return changed
 
 
-def tailscale_ip() -> str:
-    """This machine's address in the tailnet. Without it there is nowhere to
-    bind the server so that the phone sees it and the rest of the network does
-    not."""
+def tailscale_ip() -> str | None:
+    """This machine's address in the tailnet, or None while Tailscale has not
+    come up yet. Without it there is nowhere to bind the server so that the
+    phone sees it and the rest of the network does not."""
     try:
         out = subprocess.run(["tailscale", "ip", "-4"], capture_output=True,
                              text=True, timeout=5).stdout.strip().splitlines()
@@ -804,8 +883,7 @@ def tailscale_ip() -> str:
             return out[0].strip()
     except (OSError, subprocess.SubprocessError):
         pass
-    error("no Tailscale address — the server will only listen on localhost")
-    return "127.0.0.1"
+    return None
 
 
 class PhoneServer:
@@ -819,7 +897,11 @@ class PhoneServer:
     exposes nothing to the local network or the internet.
     """
 
-    def __init__(self, host: str, port: int):
+    def __init__(self, host: str | None, port: int):
+        # None: bind the Tailscale address once Tailscale has one. At boot the
+        # bridge starts before tailscaled hands out the address; binding
+        # localhost then would leave the phone unable to reach it until the
+        # next restart.
         self.host = host
         self.port = port
         # What the last /pending handed out — so the shortcut can confirm
@@ -893,6 +975,15 @@ class PhoneServer:
         return "404 Not Found", {"error": "no such path"}
 
     async def serve(self):
+        waited = 0
+        while self.host is None:
+            self.host = tailscale_ip()
+            if self.host is not None:
+                break
+            if waited % 60 == 0:
+                error("no Tailscale address yet — waiting before binding the phone server")
+            await asyncio.sleep(5.0)
+            waited += 5
         # Retry instead of giving up: after a shell restart the previous bridge
         # can hold the port a moment longer, and finishing this task used to
         # kill the whole bridge (run() ends on the first completed task).
@@ -1729,6 +1820,10 @@ async def main():
         os.close(lock_fd)
         error("another Spacewalk bridge already owns the connection")
         return
+    # Only under the lock: no other bridge can be in the middle of a write.
+    removed = remove_stale_temp_files()
+    if removed:
+        emit({"t": "lifecycle", "event": "cleanup", "stale_temp_files": removed})
     # Keep this descriptor alive until process exit, before loading counters.
     bridge = Bridge(args.address, args.steps_uuid, args.stride,
                     heart_address=args.heart_address, heart_limit=args.heart_limit)
@@ -1738,7 +1833,7 @@ async def main():
     bridge.target_incline = targets["incline"]
     if args.serve:
         host, _, port = args.serve.rpartition(":")
-        bridge.server = PhoneServer(host or tailscale_ip(), int(port))
+        bridge.server = PhoneServer(host or None, int(port))
     emit({"t": "lifecycle", "event": "started", "pid": os.getpid()})
     await bridge.run()
     emit({"t": "lifecycle", "event": "stopped", "pid": os.getpid()})
