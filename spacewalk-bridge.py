@@ -74,6 +74,37 @@ TARGETS_PATH = STATE_DIR / "targets.json"
 # something at the desk should not split a walk into two sessions.
 SESSION_IDLE_GAP = 90
 
+# bridge.log gets about one line a second while the treadmill is connected and
+# nothing else trims it (70 MB by 2026-09-18). Past this size it becomes
+# bridge.log.1, replacing the previous one, so both never exceed twice the cap.
+LOG_MAX_BYTES = 5 * 1024 * 1024
+
+# Size of bridge.log as this process knows it: measured once, then advanced by
+# what is written, so a line does not cost a stat. None means "measure again".
+log_bytes = None
+
+
+def append_log(text: str):
+    global log_bytes
+    data = text.encode("utf-8")
+    try:
+        if log_bytes is None:
+            try:
+                log_bytes = os.lstat(LOG_PATH).st_size
+            except FileNotFoundError:
+                log_bytes = 0
+        if log_bytes > 0 and log_bytes + len(data) > LOG_MAX_BYTES:
+            os.replace(LOG_PATH, LOG_PATH.with_name(LOG_PATH.name + ".1"))
+            log_bytes = 0
+        with LOG_PATH.open("ab") as fh:
+            fh.write(data)
+        log_bytes += len(data)
+    except OSError:
+        # The file may have been moved or removed under us; the count is no
+        # longer trustworthy, so the next line measures it afresh.
+        log_bytes = None
+        raise
+
 
 def emit(obj):
     line = json.dumps(obj, separators=(",", ":"))
@@ -87,8 +118,7 @@ def emit(obj):
     # there is no way to see what the treadmill says while the plugin runs.
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        with LOG_PATH.open("a") as fh:
-            fh.write(f"{datetime.now().isoformat(timespec='seconds')} {line}\n")
+        append_log(f"{datetime.now().isoformat(timespec='seconds')} {line}\n")
     except OSError:
         pass
 
@@ -175,6 +205,55 @@ def append_state(path: Path, text: str):
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+# A bridge killed between mkstemp and os.replace in write_state() leaves its
+# temp file behind for good (50 copies of targets.json.*.tmp from 2026-09-08).
+# Anything younger than this may still belong to a write in progress.
+STALE_TEMP_SECONDS = 3600
+
+
+def is_state_temp_name(name: str) -> bool:
+    """True only for the names write_state() makes: <state file>.<random>.tmp.
+    Everything else in the state dir is the walker's history and stays."""
+    if not name.endswith(".tmp"):
+        return False
+    target, _, random_part = name[:-len(".tmp")].rpartition(".")
+    if not target or not random_part:
+        return False
+    if target in (TARGETS_PATH.name, SESSIONS_PATH.name, OPEN_SESSION_PATH.name):
+        return True
+    day, _, suffix = target.rpartition(".")
+    if suffix != "json" or len(day) != 10:
+        return False
+    try:
+        date.fromisoformat(day)
+    except ValueError:
+        return False
+    return True
+
+
+def remove_stale_temp_files() -> int:
+    removed = 0
+    try:
+        entries = list(os.scandir(STATE_DIR))
+    except OSError:
+        return 0
+    now = time.time()
+    for entry in entries:
+        if not is_state_temp_name(entry.name):
+            continue
+        try:
+            st = entry.stat(follow_symlinks=False)
+            if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+                continue
+            if now - st.st_mtime < STALE_TEMP_SECONDS:
+                continue
+            os.unlink(entry.path)
+            removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 # ------------------------------------------------------------------ targets
@@ -1240,6 +1319,10 @@ async def main():
         os.close(lock_fd)
         error("another Spacewalk bridge already owns the connection")
         return
+    # Only under the lock: no other bridge can be in the middle of a write.
+    removed = remove_stale_temp_files()
+    if removed:
+        emit({"t": "lifecycle", "event": "cleanup", "stale_temp_files": removed})
     # Keep this descriptor alive until process exit, before loading counters.
     bridge = Bridge(args.address, args.steps_uuid, args.stride)
     bridge.target_defaults = {"speed": args.speed, "incline": args.incline}
