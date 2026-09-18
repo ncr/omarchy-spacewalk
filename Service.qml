@@ -22,6 +22,11 @@ Item {
   // Port on which the iPhone shortcut receives transitions. 0 (the default) means
   // the server does not start at all — it is enabled only by a settings entry.
   property int phonePort: 0
+  // Heart rate strap: "" takes the first one in reach that advertises the
+  // standard Heart Rate service, "off" leaves straps alone.
+  property string heartAddress: ""
+  // A rate that stays above this gets a note on the chart. 0 turns it off.
+  property int heartLimit: 150
 
   // State read by the widget and the panel.
   // Not "state": that is a built-in Item property and Qt's own state mechanism.
@@ -60,6 +65,17 @@ Item {
   // the disk every time the panel opens.
   property var history: ({})
   readonly property bool paused: beltState === "paused"
+  // The strap: off | idle | connecting | connected. heartBpm 0 means no reading.
+  property string heartState: "idle"
+  property int heartBpm: 0
+  property string heartDevice: ""
+  property int heartBattery: -1
+  // Today's chart. Points are [unix time, bpm, speed, incline], one per 5 s;
+  // notes are {at, kind, text, bpm}. The bridge keeps both on disk and sends
+  // them whole on "heart-series", then point by point.
+  property var heartPoints: []
+  property var heartNotes: []
+  readonly property int heartPointsMax: 4320
   // Where the open panel's card sits on screen ("x y w h"), published by
   // Panel.qml for tools/hero-set; empty string when the panel is closed.
   property string panelRect: ""
@@ -102,6 +118,16 @@ Item {
     if (settings.phonePort !== undefined && settings.phonePort !== null
         && Math.round(Number(settings.phonePort)) !== phonePort) {
       phonePort = Math.round(Number(settings.phonePort))
+      changedTransport = true
+    }
+    if (settings.heartAddress !== undefined && settings.heartAddress !== null
+        && String(settings.heartAddress) !== heartAddress) {
+      heartAddress = String(settings.heartAddress)
+      changedTransport = true
+    }
+    if (settings.heartLimit !== undefined && settings.heartLimit !== null
+        && Math.round(Number(settings.heartLimit)) !== heartLimit) {
+      heartLimit = Math.round(Number(settings.heartLimit))
       changedTransport = true
     }
     if (changedTransport && bridge.running) restart()
@@ -193,6 +219,25 @@ Item {
       if (msg.target_incline !== null && msg.target_incline !== undefined) targetIncline = msg.target_incline
     } else if (msg.t === "data") {
       applyData(msg)
+    } else if (msg.t === "heart") {
+      heartState = msg.state || "idle"
+      heartBpm = msg.bpm || 0
+      heartDevice = msg.device || ""
+      heartBattery = msg.battery === undefined || msg.battery === null ? -1 : msg.battery
+    } else if (msg.t === "hr_point") {
+      // A point the series reply already carried arrives once more right after it.
+      var last = heartPoints.length > 0 ? heartPoints[heartPoints.length - 1][0] : 0
+      if (msg.point && msg.point[0] > last)
+        heartPoints = heartPoints.concat([msg.point]).slice(-heartPointsMax)
+    } else if (msg.t === "hr_note") {
+      heartNotes = heartNotes.concat([{ at: msg.at, kind: msg.kind, text: msg.text, bpm: msg.bpm }])
+    } else if (msg.t === "hr_series") {
+      if (msg.reset) { heartPoints = []; heartNotes = msg.notes || [] }
+      if (msg.points) heartPoints = heartPoints.concat(msg.points).slice(-heartPointsMax)
+    } else if (msg.t === "lifecycle") {
+      // A bridge that has just started holds today's chart from its file; this
+      // client may have been attached before it came up.
+      if (msg.event === "started") send("heart-series")
     }
   }
 
@@ -264,7 +309,10 @@ Item {
         beltState: root.beltState, phase: root.phaseName, phaseText: root.phaseText,
         walking: root.walking, daySteps: root.daySteps,
         dayKcal: root.dayKcal, dayElapsedS: root.dayElapsedS,
-        dayDistanceM: root.dayDistanceM, lastError: root.lastError
+        dayDistanceM: root.dayDistanceM, lastError: root.lastError,
+        heartState: root.heartState, heartBpm: root.heartBpm, heartDevice: root.heartDevice,
+        heartBattery: root.heartBattery, heartPoints: root.heartPoints.length,
+        heartNotes: root.heartNotes.length
       })
     }
 
@@ -293,8 +341,13 @@ Item {
       // Server for the iPhone shortcut. We pass just the port — the bridge binds
       // to the Tailscale address, so it is not visible outside your own devices.
       if (root.phonePort > 0) argv.push("--serve", ":" + root.phonePort)
+      if (root.heartAddress !== "") argv.push("--heart-address", root.heartAddress)
+      argv.push("--heart-limit", String(root.heartLimit))
       return argv
     }
+    // The chart so far. Live points only ever add to it, and a panel reload
+    // starts this client with nothing.
+    onStarted: root.send("heart-series")
     stdout: SplitParser { onRead: function(line) { root.handleLine(line) } }
     stderr: SplitParser { onRead: function(line) { root.lastError = String(line) } }
     onExited: function(code) {

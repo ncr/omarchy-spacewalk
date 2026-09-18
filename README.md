@@ -50,7 +50,35 @@ midnight resets the day counter — the bridge sums increments across walks, so
 the treadmill clearing its own counters on stop changes nothing. With the
 belt stopped, the panel shows the values to apply on start.
 
-Settings: `address`, `dailyGoal` (10000), `startSpeed` (2.5 km/h),
+### Heart rate
+
+Put on a Bluetooth chest strap and the panel grows a heart rate chart for the
+day, above the history grid. Any strap with the standard Heart Rate service
+(`0x180D`) should do; mine is a Magene. No pairing — the bridge looks for a
+strap while the treadmill is connected and takes the first one it hears. The
+strap accepts one connection, so a watch or phone app holding it keeps it
+from the computer.
+
+The bridge knows the belt's speed and incline, so it can tell a rise that
+follows a faster belt from one that came out of nowhere. It pins notes to the
+chart — hover a marker to read it:
+
+- **jump / fall** — 20 bpm or more within 20 s, held for 5 s, with speed and
+  incline unchanged for the last 90 s
+- **high** — above `heartLimit` for 30 s
+- **drift** — 10 bpm or more above minutes 5–10 of a steady stretch, after
+  20 min at the same speed and incline
+- **recovery** — how far the rate fell in the minute after the belt stopped
+- grey ticks on the bottom edge — the belt started, stopped or changed
+
+The thresholds are first guesses (`HeartNotes` in `spacewalk-bridge.py`). This
+is a training aid, not a medical device: the strap sends an averaged rate, so
+single irregular beats never show up, and its RR field is just 60000 / bpm.
+Points (one per 5 s) and notes are kept in
+`~/.local/state/omarchy-spacewalk/heart-YYYY-MM-DD.jsonl`.
+
+Settings: `heartAddress` (empty = any strap, `off` = none), `heartLimit`
+(150 bpm, 0 = off), `address`, `dailyGoal` (10000), `startSpeed` (2.5 km/h),
 `startIncline` (3%), `strideMeters` (0 = steps from the treadmill),
 `phonePort` (0 = Apple Health sync off; set it — say 8787 — and walks flow to
 an iPhone over Tailscale via Shortcuts, see

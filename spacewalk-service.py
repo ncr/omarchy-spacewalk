@@ -102,6 +102,8 @@ def validate_args(args):
     parser.add_argument("--incline", type=float)
     parser.add_argument("--serve")
     parser.add_argument("--steps-uuid")
+    parser.add_argument("--heart-address")
+    parser.add_argument("--heart-limit", type=float)
     if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
         raise ValueError("invalid bridge arguments")
     try:
@@ -127,7 +129,7 @@ class Host:
             if event.get("day") != self.cache.get("data", {}).get("day"):
                 self.cache.pop("data", None)
             self.cache["data"] = {**self.cache.get("data", {}), **event}
-        elif kind in ("status", "targets", "history", "belt", "phase", "server"):
+        elif kind in ("status", "targets", "history", "belt", "phase", "server", "heart"):
             self.cache[kind] = event
         encoded = (json.dumps(event) + "\n").encode()
         for queue in tuple(self.clients):

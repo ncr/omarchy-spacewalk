@@ -8,13 +8,23 @@ Emits one JSON object per line on stdout:
      "elapsed_s":1620,"steps":2705,"day_steps":7412,...}
     {"t":"error","msg":"..."}
 
+With a heart rate strap in reach (any Bluetooth strap with the standard Heart
+Rate service), also:
+
+    {"t":"heart","state":"connected","bpm":104,"device":"...","battery":100}
+    {"t":"hr_point","point":[1758196800,104,2.5,3]}     one per 5 s
+    {"t":"hr_note","at":1758196800,"kind":"jump","text":"..."}
+    {"t":"hr_series","reset":true,"notes":[...]}        reply to heart-series,
+    {"t":"hr_series","points":[[...],...]}              in chunks
+
 Reads one command per line from stdin:
 
-    start | stop | pause | speed 2.5 | incline 3 | reset-day | ping
+    start | stop | pause | speed 2.5 | incline 3 | reset-day | ping | heart-series
 """
 
 import argparse
 import asyncio
+import collections
 import fcntl
 import json
 import os
@@ -42,6 +52,10 @@ FTMS_SERVICE = "00001826-0000-1000-8000-00805f9b34fb"
 TREADMILL_DATA = "00002acd-0000-1000-8000-00805f9b34fb"
 CONTROL_POINT = "00002ad9-0000-1000-8000-00805f9b34fb"
 MACHINE_STATUS = "00002ada-0000-1000-8000-00805f9b34fb"
+
+HEART_SERVICE = "0000180d-0000-1000-8000-00805f9b34fb"
+HEART_MEASUREMENT = "00002a37-0000-1000-8000-00805f9b34fb"
+BATTERY_LEVEL = "00002a19-0000-1000-8000-00805f9b34fb"
 
 STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "omarchy-spacewalk"
 
@@ -75,7 +89,7 @@ TARGETS_PATH = STATE_DIR / "targets.json"
 SESSION_IDLE_GAP = 90
 
 
-def emit(obj):
+def emit(obj, log=True):
     line = json.dumps(obj, separators=(",", ":"))
     try:
         sys.stdout.write(line + "\n")
@@ -83,6 +97,8 @@ def emit(obj):
     except BrokenPipeError:
         # A vanished UI must not interrupt checkpointing or BLE cleanup.
         pass
+    if not log:
+        return  # the live heart rate and series replies would only bloat the log
     # Copy to a file: the shell consumes the bridge's stdout, so without this
     # there is no way to see what the treadmill says while the plugin runs.
     try:
@@ -420,6 +436,327 @@ def read_history(days: int = HISTORY_DAYS) -> dict:
     return out
 
 
+# ----------------------------------------------------------------- heart rate
+
+HEART_POINT_SECONDS = 5
+HEART_SERIES_MAX = 4320     # six hours of points: what the chart gets
+# The service host reads the bridge's stdout with asyncio's default 64 KB line
+# limit and dies on a longer line, so the series travels in chunks.
+HEART_SERIES_CHUNK = 500
+HEART_NOTES_MAX = 200
+
+
+def parse_heart_rate(data: bytes) -> dict:
+    """Parses a Heart Rate Measurement packet (0x2A37).
+
+    Only the rate and the skin contact bits are taken. The packet can also
+    carry RR intervals, but the Magene strap this was written against fills
+    that field with 60000 / bpm (checked over 60 packets) — a number derived
+    from the averaged rate, with nothing beat-to-beat in it.
+    """
+    if len(data) < 2:
+        return {}
+    flags = data[0]
+    if flags & 0x01:
+        if len(data) < 3:
+            return {}
+        bpm = int.from_bytes(data[1:3], "little")
+    else:
+        bpm = data[1]
+    # Bit 2: the strap can sense skin contact at all; bit 1: it does right now.
+    contact = bool(flags & 0x02) if flags & 0x04 else None
+    return {"bpm": bpm, "contact": contact}
+
+
+def load_text(speed: float, incline: float) -> str:
+    if speed <= 0:
+        return "with the belt stopped"
+    return f"at a steady {speed:.1f} km/h, {round(incline)}%"
+
+
+class HeartNotes:
+    """Turns the heart rate stream into the notes the panel pins to its chart.
+
+    The bridge knows the belt's speed and incline, which is what a watch does
+    not: a rise that follows a faster belt is expected and only gets a marker
+    saying what changed, while the same rise at an unchanged load is a note of
+    its own. Everything works from the averaged rate the strap sends, so single
+    irregular beats are out of reach — see parse_heart_rate.
+
+    The thresholds are first guesses, to be tuned on recorded walks.
+    """
+
+    JUMP_BPM = 20          # a rise or fall this large...
+    JUMP_WINDOW = 20.0     # ...within this many seconds
+    # A jump must hold this long. Dry electrodes and static from a shirt show
+    # up as spikes of a second or two; a real change of rate stays.
+    JUMP_HOLD = 5.0
+    # Heart rate trails a change of speed or incline by about a minute, so a
+    # jump inside this stretch belongs to the load, not to the heart. It also
+    # covers the first moments of a strap just put on.
+    LOAD_LAG = 90.0
+    LOAD_SETTLE = 10.0     # the belt ramps in 0.1 km/h steps; one marker per change
+    COOLDOWN = 120.0
+    HIGH_HOLD = 30.0
+    RECOVERY_AFTER = 60.0
+    RECOVERY_MIN_WALK = 300.0
+    DRIFT_AFTER = 1200.0
+    DRIFT_BPM = 10
+    KEEP = 300.0
+    GAP = 15.0             # a longer silence, and the windows start over
+
+    def __init__(self, limit: float = 0):
+        self.limit = limit
+        self.recent: collections.deque = collections.deque()   # (time, bpm)
+        self.last: float | None = None
+        self.load: tuple | None = None         # (speed, incline) as last read
+        self.load_since = 0.0
+        self.shown_load: tuple | None = None   # the load the last marker announced
+        self.walk_since: float | None = None
+        self.recovery: dict | None = None
+        self.noted_at: dict = {}
+        self.high_armed = True
+        self.base_sum = 0.0
+        self.base_count = 0
+        self.drift_noted = False
+
+    def mean(self, now: float, seconds: float) -> float:
+        values = [bpm for at, bpm in self.recent if at > now - seconds]
+        return sum(values) / len(values) if values else 0.0
+
+    def cooled(self, kind: str, now: float) -> bool:
+        if now - self.noted_at.get(kind, -self.COOLDOWN) < self.COOLDOWN:
+            return False
+        self.noted_at[kind] = now
+        return True
+
+    def feed(self, now: float, bpm: int, speed: float, incline: float) -> list[dict]:
+        """One usable reading; `now` is a monotonic clock. Returns the notes it
+        gave rise to, each {"kind", "text", "bpm"}."""
+        if self.last is not None and now - self.last > self.GAP:
+            self.recent.clear()
+            self.load = None
+            self.walk_since = None
+            self.recovery = None
+        self.last = now
+        self.recent.append((now, bpm))
+        while self.recent[0][0] < now - self.KEEP:
+            self.recent.popleft()
+        notes = (self.track_load(now, speed, incline) + self.check_recovery(now)
+                 + self.check_jump(now) + self.check_high(now, bpm)
+                 + self.check_drift(now, bpm))
+        for note in notes:
+            note.setdefault("bpm", bpm)
+        return notes
+
+    def track_load(self, now: float, speed: float, incline: float) -> list[dict]:
+        load = (round(speed, 1), round(incline))
+        if load != self.load:
+            was_walking = self.load is not None and self.load[0] > 0
+            if load[0] > 0 and not was_walking:
+                self.walk_since = now
+                self.recovery = None
+            elif load[0] <= 0 and was_walking:
+                if self.walk_since is not None and now - self.walk_since >= self.RECOVERY_MIN_WALK:
+                    self.recovery = {"due": now + self.RECOVERY_AFTER, "from": self.mean(now, 10.0)}
+                self.walk_since = None
+            self.load = load
+            self.load_since = now
+            self.base_sum, self.base_count, self.drift_noted = 0.0, 0, False
+        if self.shown_load is None:
+            self.shown_load = load
+        if load == self.shown_load or now - self.load_since < self.LOAD_SETTLE:
+            return []
+        before, self.shown_load = self.shown_load, load
+        if load[0] <= 0:
+            text = "Belt stopped"
+        elif before[0] <= 0:
+            text = f"Belt started: {load[0]:.1f} km/h, {load[1]}%"
+        else:
+            text = f"Now {load[0]:.1f} km/h, {load[1]}% (was {before[0]:.1f} km/h, {before[1]}%)"
+        return [{"kind": "load", "text": text}]
+
+    def check_recovery(self, now: float) -> list[dict]:
+        if self.recovery is None or now < self.recovery["due"]:
+            return []
+        start, self.recovery = self.recovery["from"], None
+        end = self.mean(now, 5.0)
+        return [{"kind": "recovery",
+                 "text": f"Recovery: {start:.0f} to {end:.0f} bpm in the minute after stopping"}]
+
+    @staticmethod
+    def level(values: list[int], share: float) -> int:
+        """The reading `share` of the way up the sorted values."""
+        ordered = sorted(values)
+        return ordered[min(len(ordered) - 1, int(len(ordered) * share))]
+
+    def check_jump(self, now: float) -> list[dict]:
+        """The last JUMP_HOLD seconds against the stretch before them. The new
+        rate has to hold in every reading. The level it is measured against is
+        a percentile, not the lowest or highest reading: a spike a few seconds
+        earlier would otherwise read as a fall from its peak."""
+        if now - self.load_since < self.LOAD_LAG or self.recent[0][0] > now - self.JUMP_WINDOW:
+            return []
+        before = [bpm for at, bpm in self.recent
+                  if now - self.JUMP_WINDOW <= at < now - self.JUMP_HOLD]
+        held = [bpm for at, bpm in self.recent if at >= now - self.JUMP_HOLD]
+        if len(before) < 8 or len(held) < 3:
+            return []
+        where = load_text(*self.load)
+        low, high = self.level(before, 0.3), self.level(before, 0.7)
+        if min(held) - low >= self.JUMP_BPM and self.cooled("jump", now):
+            return [{"kind": "jump", "text": f"Jumped from {low} to {max(held)} bpm "
+                                             f"within {self.JUMP_WINDOW:.0f} s {where}"}]
+        if high - max(held) >= self.JUMP_BPM and self.cooled("fall", now):
+            return [{"kind": "fall", "text": f"Fell from {high} to {min(held)} bpm "
+                                             f"within {self.JUMP_WINDOW:.0f} s {where}"}]
+        return []
+
+    def check_high(self, now: float, bpm: int) -> list[dict]:
+        if self.limit <= 0:
+            return []
+        if bpm < self.limit - 5:
+            self.high_armed = True
+        if not self.high_armed or self.recent[0][0] > now - self.HIGH_HOLD:
+            return []
+        window = [value for at, value in self.recent if at >= now - self.HIGH_HOLD]
+        if min(window) < self.limit:
+            return []
+        self.high_armed = False
+        return [{"kind": "high", "text": f"Above {self.limit:.0f} bpm for {self.HIGH_HOLD:.0f} s, "
+                                         f"peak {max(window)}"}]
+
+    def check_drift(self, now: float, bpm: int) -> list[dict]:
+        """At an unchanged load the rate should level off. Minutes 5–10 of the
+        stretch are the baseline — by then the rate has caught up with the load."""
+        if self.load is None or self.load[0] <= 0:
+            return []
+        age = now - self.load_since
+        if 300.0 <= age < 600.0:
+            self.base_sum += bpm
+            self.base_count += 1
+        if age < self.DRIFT_AFTER or self.drift_noted or self.base_count == 0:
+            return []
+        gain = self.mean(now, 300.0) - self.base_sum / self.base_count
+        if gain < self.DRIFT_BPM:
+            return []
+        self.drift_noted = True
+        return [{"kind": "drift", "text": f"Drift: +{gain:.0f} bpm over {age / 60:.0f} min "
+                                          f"{load_text(*self.load)}"}]
+
+
+class HeartDay:
+    """Today's heart rate the way the chart draws it: one point per
+    HEART_POINT_SECONDS — [unix time, bpm, speed, incline] — and the notes.
+    Every addition goes to the day's file first, so a bridge restart mid-walk
+    (there is one after every backend edit) keeps the chart."""
+
+    def __init__(self):
+        self.day = date.today()
+        self.points: list[list] = []
+        self.notes: list[dict] = []
+        self.load()
+
+    @property
+    def path(self) -> Path:
+        return STATE_DIR / f"heart-{self.day.isoformat()}.jsonl"
+
+    def load(self):
+        self.points, self.notes = [], []
+        text = read_state(self.path)
+        if text is None:
+            return
+        for line in text.splitlines():
+            try:
+                raw = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(raw, dict):
+                continue
+            point, note = raw.get("p"), raw.get("n")
+            if (isinstance(point, list) and len(point) == 4
+                    and all(isinstance(v, (int, float)) for v in point)):
+                self.points.append(point)
+            elif isinstance(note, dict) and isinstance(note.get("at"), (int, float)):
+                self.notes.append(note)
+        del self.points[:-HEART_SERIES_MAX]
+        del self.notes[:-HEART_NOTES_MAX]
+
+    def add(self, key: str, value, at: float) -> bool:
+        """Returns True when this addition opened a new day, and with it an
+        empty chart."""
+        rolled = date.fromtimestamp(at) != self.day
+        if rolled:
+            self.day = date.fromtimestamp(at)
+            self.load()
+        kept, cap = ((self.points, HEART_SERIES_MAX) if key == "p"
+                     else (self.notes, HEART_NOTES_MAX))
+        kept.append(value)
+        del kept[:-cap]
+        try:
+            append_state(self.path, json.dumps({key: value}, separators=(",", ":")) + "\n")
+        except OSError as exc:
+            error(f"cannot save {self.path}: {exc}")
+        return rolled
+
+    def messages(self):
+        first = self.points[0][0] if self.points else 0
+        yield {"t": "hr_series", "reset": True, "day": self.day.isoformat(),
+               "notes": [n for n in self.notes if n["at"] >= first]}
+        for start in range(0, len(self.points), HEART_SERIES_CHUNK):
+            yield {"t": "hr_series", "points": self.points[start:start + HEART_SERIES_CHUNK]}
+
+
+# ---------------------------------------------------------------------- radio
+
+class Radio:
+    """One discovery shared by everyone waiting for a device.
+
+    The treadmill and the strap are looked for at the same time, and a second
+    BleakScanner in one process fails in BlueZ with "Operation already in
+    progress". A waiter with drives=False only listens in on a discovery
+    someone else keeps running, and costs the radio nothing.
+    """
+
+    def __init__(self):
+        self.waiters: list[dict] = []
+        self.scanner: BleakScanner | None = None
+        self.lock = asyncio.Lock()
+
+    def on_detect(self, device, adv):
+        for waiter in self.waiters:
+            if not waiter["found"].done() and waiter["match"](device, adv):
+                waiter["found"].set_result((device, adv))
+
+    async def sync(self):
+        wanted = any(w["drives"] for w in self.waiters)
+        if wanted and self.scanner is None:
+            scanner = BleakScanner(detection_callback=self.on_detect)
+            await scanner.start()
+            self.scanner = scanner
+        elif not wanted and self.scanner is not None:
+            scanner, self.scanner = self.scanner, None
+            await scanner.stop()
+
+    async def wait_for(self, match, patience: float, drives: bool = True):
+        """The first (device, advertisement) that match() accepts, or None
+        once patience runs out."""
+        waiter = {"match": match, "drives": drives,
+                  "found": asyncio.get_running_loop().create_future()}
+        try:
+            async with self.lock:
+                self.waiters.append(waiter)
+                await self.sync()
+            return await asyncio.wait_for(waiter["found"], patience)
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            async with self.lock:
+                if waiter in self.waiters:
+                    self.waiters.remove(waiter)
+                await self.sync()
+
+
 # ---------------------------------------------------------------- phone server
 
 def read_sessions() -> list[dict]:
@@ -575,12 +912,36 @@ class PhoneServer:
 
 # ----------------------------------------------------------------- connection
 
+async def bluetoothctl(*args: str, timeout: float = 10.0) -> bytes | None:
+    """The command's output, or None when it could not be run to the end."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "bluetoothctl", *args,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+        return out
+    except (OSError, asyncio.TimeoutError):
+        return None
+
+
 class Bridge:
-    def __init__(self, address: str | None, steps_uuid: str | None, stride_m: float):
+    def __init__(self, address: str | None, steps_uuid: str | None, stride_m: float,
+                 heart_address: str = "", heart_limit: float = 0):
         self.address = address
         self.steps_uuid = steps_uuid
         self.stride_m = stride_m
         self.client: BleakClient | None = None
+        self.radio = Radio()
+        # "" takes the first strap that advertises the Heart Rate service,
+        # "off" leaves the strap alone.
+        self.heart_address = heart_address
+        self.heart = HeartDay()
+        self.heart_notes = HeartNotes(heart_limit)
+        self.heart_status: dict = {}
+        self.heart_sent_at = 0.0
+        self.heart_last_packet = 0.0
+        self.heart_slot: int | None = None
+        self.heart_bucket: list[int] = []
         self.day = DayTotals()
         self.latest: dict = {}
         self.control_replies: asyncio.Queue = asyncio.Queue()
@@ -610,6 +971,149 @@ class Bridge:
     @property
     def running_belt(self) -> bool:
         return self.latest.get("speed", 0) > 0
+
+    # ---- heart rate
+
+    def current_load(self) -> tuple[float, float]:
+        """Speed and incline as the notes and the chart should see them. The
+        last reading outlives a lost treadmill link, and a belt that may long
+        have stopped must not pass for a steady walk."""
+        if not self.client or not self.client.is_connected:
+            return 0.0, 0.0
+        return float(self.latest.get("speed", 0)), float(self.latest.get("incline", 0))
+
+    def publish_heart(self, state: str, bpm: int | None = None, **extra):
+        """The strap's state and the live rate, for the panel. A change of
+        state goes out at once and into the log; the rate alone at most once a
+        second and past the log, which has no rotation."""
+        known = {k: v for k, v in self.heart_status.items() if k in ("device", "battery")}
+        current = {"state": state, "bpm": bpm, **known, **extra}
+        if current == self.heart_status:
+            return
+        changed_state = state != self.heart_status.get("state")
+        now = time.monotonic()
+        if not changed_state and now - self.heart_sent_at < 1.0:
+            return
+        self.heart_status = current
+        self.heart_sent_at = now
+        emit({"t": "heart", **current}, log=changed_state)
+
+    def on_heart(self, _sender, data: bytearray):
+        sample = parse_heart_rate(bytes(data))
+        self.heart_last_packet = time.monotonic()
+        bpm = sample.get("bpm")
+        # No skin contact, or a number no heart produces: the strap is being
+        # put on or taken off. Shown as "no reading", kept out of the chart.
+        if bpm is None or sample.get("contact") is False or not 30 <= bpm <= 230:
+            self.publish_heart("connected", None)
+            return
+        self.publish_heart("connected", bpm)
+        wall = time.time()
+        speed, incline = self.current_load()
+        for note in self.heart_notes.feed(self.heart_last_packet, bpm, speed, incline):
+            note = {"at": int(wall), **note}
+            if self.heart.add("n", note, wall):
+                self.send_heart_series()
+            emit({"t": "hr_note", **note})
+        slot = int(wall // HEART_POINT_SECONDS)
+        if self.heart_slot is not None and slot != self.heart_slot:
+            self.flush_heart_point()
+        self.heart_slot = slot
+        self.heart_bucket.append(bpm)
+
+    def flush_heart_point(self):
+        if not self.heart_bucket or self.heart_slot is None:
+            return
+        speed, incline = self.current_load()
+        at = (self.heart_slot + 1) * HEART_POINT_SECONDS
+        point = [at, round(sum(self.heart_bucket) / len(self.heart_bucket)),
+                 round(speed, 1), round(incline)]
+        self.heart_bucket = []
+        if self.heart.add("p", point, at):
+            self.send_heart_series()   # past midnight: the panel starts an empty chart
+        emit({"t": "hr_point", "point": point}, log=False)
+
+    def send_heart_series(self):
+        for message in self.heart.messages():
+            emit(message, log=False)
+
+    def is_strap(self, device, adv) -> bool:
+        if self.heart_address:
+            return device.address.upper() == self.heart_address.upper()
+        return HEART_SERVICE in [u.lower() for u in (adv.service_uuids or [])]
+
+    async def release_stale_strap(self):
+        """The strap's version of release_stale_link: a link left open by a
+        bridge that died stops the strap from advertising. Without a set
+        address, whatever BlueZ holds connected that has the Heart Rate
+        service is taken for that leftover."""
+        if self.heart_address:
+            await self.release_stale_link(self.heart_address)
+            return
+        listing = await bluetoothctl("devices", "Connected")
+        for line in (listing or b"").decode("utf-8", "replace").splitlines():
+            parts = line.split()
+            if len(parts) < 2 or parts[0] != "Device":
+                continue
+            info = await bluetoothctl("info", parts[1])
+            if info and HEART_SERVICE.encode() in info.lower():
+                await self.release_stale_link(parts[1])
+
+    async def heart_session(self, device, adv):
+        name = adv.local_name or device.name or device.address
+        self.publish_heart("connecting", device=name)
+        gone = asyncio.Event()
+        try:
+            async with BleakClient(device, timeout=20.0,
+                                   disconnected_callback=lambda _client: gone.set()) as client:
+                battery = None
+                try:
+                    battery = bytes(await client.read_gatt_char(BATTERY_LEVEL))[0]
+                except (BleakError, IndexError):
+                    pass  # not every strap reports its battery
+                self.heart_last_packet = time.monotonic()
+                await client.start_notify(HEART_MEASUREMENT, self.on_heart)
+                self.publish_heart("connected", device=name, battery=battery)
+                # A strap taken off goes quiet before it drops the link; hanging
+                # on to a silent link would keep it from being found again.
+                while not gone.is_set() and time.monotonic() - self.heart_last_packet < 30.0:
+                    try:
+                        await asyncio.wait_for(gone.wait(), 5.0)
+                    except asyncio.TimeoutError:
+                        pass
+        finally:
+            self.flush_heart_point()
+            self.heart_slot = None
+            self.publish_heart("idle")
+
+    async def heart_loop(self):
+        if self.heart_address.lower() == "off":
+            self.publish_heart("off")
+            return
+        self.publish_heart("idle")
+        await self.release_stale_strap()
+        misses = 0
+        while True:
+            # Looking for the strap is worth the radio only while the treadmill
+            # is connected — a walk is about to start or under way. The rest of
+            # the time this just listens in on the scans for the treadmill.
+            treadmill_up = bool(self.client and self.client.is_connected)
+            try:
+                hit = await self.radio.wait_for(self.is_strap, 20.0, drives=treadmill_up)
+                if hit is not None:
+                    misses = 0
+                    await self.heart_session(*hit)
+                    await asyncio.sleep(3.0)
+                    continue
+            except (BleakError, asyncio.TimeoutError, OSError) as exc:
+                error(f"heart rate strap: {exc}")
+                await asyncio.sleep(10.0)
+                continue
+            if treadmill_up:
+                misses += 1
+                await asyncio.sleep(40.0 if misses < 5 else 100.0)
+            else:
+                misses = 0
 
     # ---- sessions (walks) to be sent to the phone
 
@@ -960,6 +1464,9 @@ class Bridge:
         if cmd == "ping":
             emit({"t": "pong", "connected": bool(self.client and self.client.is_connected)})
             return
+        if cmd == "heart-series":
+            self.send_heart_series()
+            return
         if cmd == "reset-day":
             self.day.totals = {f: 0.0 for f in DayTotals.FIELDS}
             self.day.dirty = True
@@ -1022,67 +1529,44 @@ class Bridge:
 
     # ---- loop
 
-    async def release_stale_link(self):
+    async def release_stale_link(self, address: str | None):
         """A bridge that died without saying goodbye (SIGKILL, a crash) leaves
         its link open in BlueZ. The treadmill does not advertise while it has
         a connection, so a scan would never find it — the previous bridge
         scanned for 13 minutes on 2026-09-07. Drop the link first; the
         treadmill starts advertising within seconds."""
-        if not self.address:
+        if not address:
             return
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "bluetoothctl", "info", self.address,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-            out, _ = await asyncio.wait_for(proc.communicate(), 10.0)
-        except (OSError, asyncio.TimeoutError):
+        out = await bluetoothctl("info", address)
+        if out is None or b"Connected: yes" not in out:
             return
-        if b"Connected: yes" not in out:
-            return
-        status("releasing", address=self.address)
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "bluetoothctl", "disconnect", self.address,
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-            await asyncio.wait_for(proc.wait(), 15.0)
-        except (OSError, asyncio.TimeoutError) as exc:
-            error(f"could not release the stale link to {self.address}: {exc}")
+        # The panel reads "status" as the treadmill link; the strap's leftovers
+        # are none of its business.
+        if address == self.address:
+            status("releasing", address=address)
+        if await bluetoothctl("disconnect", address, timeout=15.0) is None:
+            error(f"could not release the stale link to {address}")
 
     async def find_device(self, patience: float = 60.0):
         """A continuous scan instead of a one-shot query. The treadmill
         advertises only for a moment after power-on, so we listen non-stop and
         grab it the moment it speaks up. BlueZ forgets it after a disconnect,
         so connecting by the address alone ends in "device not found"."""
-        await self.release_stale_link()
+        await self.release_stale_link(self.address)
         status("scanning")
-        found = asyncio.Event()
-        hit = {}
         want = (self.address or "").upper()
 
-        def on_detect(device, adv):
+        def is_treadmill(device, adv):
             if want:
-                if device.address.upper() != want:
-                    return
-            else:
-                uuids = [u.lower() for u in (adv.service_uuids or [])]
-                if FTMS_SERVICE not in uuids:
-                    return
-            hit["device"] = device
-            hit["name"] = adv.local_name or device.name or device.address
-            found.set()
+                return device.address.upper() == want
+            return FTMS_SERVICE in [u.lower() for u in (adv.service_uuids or [])]
 
-        scanner = BleakScanner(detection_callback=on_detect)
-        await scanner.start()
-        try:
-            await asyncio.wait_for(found.wait(), patience)
-        except asyncio.TimeoutError:
-            pass
-        finally:
-            await scanner.stop()
-
-        device = hit.get("device")
-        if device is not None:
-            status("found", device=hit.get("name", ""), address=device.address)
+        hit = await self.radio.wait_for(is_treadmill, patience)
+        if hit is None:
+            return None
+        device, adv = hit
+        status("found", device=adv.local_name or device.name or device.address,
+               address=device.address)
         return device
 
     async def session(self) -> bool:
@@ -1188,6 +1672,7 @@ class Bridge:
         stdin_task = asyncio.create_task(self.stdin_loop())
         conn_task = asyncio.create_task(self.connection_loop())
         save_task = asyncio.create_task(self.save_loop())
+        heart_task = asyncio.create_task(self.heart_loop())
         server_task = asyncio.create_task(self.server.serve()) if self.server else None
         # The shell stops the bridge with a signal on every plugin reload.
         # Python's default for SIGTERM ends the process on the spot, link and
@@ -1210,7 +1695,7 @@ class Bridge:
         self.persist_open_session()
         if stop_task in done:
             status("stopping")
-        tasks = [t for t in (stdin_task, conn_task, stop_task, save_task, server_task) if t]
+        tasks = [t for t in (stdin_task, conn_task, stop_task, save_task, heart_task, server_task) if t]
         for task in tasks:
             task.cancel()
         # Cancelling the connection task unwinds `async with BleakClient`,
@@ -1229,6 +1714,10 @@ async def main():
                         help="stride length in meters — derives steps from distance when the treadmill reports none")
     parser.add_argument("--serve", metavar="HOST:PORT",
                         help="expose sessions for the phone, e.g. :8787 (bare port = the Tailscale address)")
+    parser.add_argument("--heart-address", default="",
+                        help="heart rate strap address; empty takes any strap, off disables")
+    parser.add_argument("--heart-limit", type=float, default=0,
+                        help="note a heart rate that stays above this many bpm; 0 disables")
     parser.add_argument("--speed", type=float, default=None, help="speed to set after start")
     parser.add_argument("--incline", type=float, default=None, help="incline to set after start")
     args = parser.parse_args()
@@ -1241,7 +1730,8 @@ async def main():
         error("another Spacewalk bridge already owns the connection")
         return
     # Keep this descriptor alive until process exit, before loading counters.
-    bridge = Bridge(args.address, args.steps_uuid, args.stride)
+    bridge = Bridge(args.address, args.steps_uuid, args.stride,
+                    heart_address=args.heart_address, heart_limit=args.heart_limit)
     bridge.target_defaults = {"speed": args.speed, "incline": args.incline}
     targets = load_targets(bridge.target_defaults)
     bridge.target_speed = targets["speed"]

@@ -162,3 +162,122 @@ var MONTHS = ["January", "February", "March", "April", "May", "June",
 function formatDay(date) {
   return MONTHS[date.getMonth()] + " " + date.getDate()
 }
+
+// --------------------------------------------------------------- heart chart
+//
+// A point is [unix time, bpm, speed, incline], one per 5 s of strap data.
+
+// The chart's vertical range: the data's own, opened up to at least 30 bpm and
+// snapped to tens, so the scale does not twitch with every new point.
+function heartRange(points) {
+  if (!points || points.length === 0) return { low: 60, high: 120 }
+  var low = points[0][1], high = points[0][1]
+  for (var i = 1; i < points.length; i++) {
+    if (points[i][1] < low) low = points[i][1]
+    if (points[i][1] > high) high = points[i][1]
+  }
+  low = Math.floor((low - 3) / 10) * 10
+  high = Math.ceil((high + 3) / 10) * 10
+  while (high - low < 30) { high += 10; if (high - low < 30) low -= 10 }
+  return { low: low, high: high }
+}
+
+// Points sit side by side no matter how much clock time lies between them: two
+// walks six hours apart would otherwise be two slivers at the chart's edges.
+// With little data the chart still spans ten minutes, so the first minute of
+// a walk does not stretch across the whole width.
+var HEART_MIN_POINTS = 120
+var HEART_BREAK_SECONDS = 30
+
+function heartStep(count, width) {
+  return width / Math.max(count - 1, HEART_MIN_POINTS - 1)
+}
+
+function heartY(bpm, range, height) {
+  var share = (bpm - range.low) / (range.high - range.low)
+  return Math.round((1 - share) * (height - 2)) + 1
+}
+
+// The line as [x, y] runs, cut wherever the strap was away.
+function heartSegments(points, width, height, range) {
+  var out = [], run = []
+  var step = heartStep(points.length, width)
+  for (var i = 0; i < points.length; i++) {
+    if (i > 0 && points[i][0] - points[i - 1][0] > HEART_BREAK_SECONDS) {
+      out.push(run)
+      run = []
+    }
+    run.push([i * step, heartY(points[i][1], range, height)])
+  }
+  if (run.length > 0) out.push(run)
+  for (var k = 0; k < out.length; k++)
+    // A lone point has no line to it; doubled, the round cap draws it as a dot.
+    if (out[k].length === 1) out[k].push([out[k][0][0] + 0.01, out[k][0][1]])
+  return out
+}
+
+// Indexes of the points that start a new run, for the divider lines.
+function heartBreaks(points) {
+  var out = []
+  for (var i = 1; i < points.length; i++)
+    if (points[i][0] - points[i - 1][0] > HEART_BREAK_SECONDS) out.push(i)
+  return out
+}
+
+function heartIndexAt(x, count, width) {
+  if (count === 0) return -1
+  return clamp(Math.round(x / heartStep(count, width)), 0, count - 1)
+}
+
+// Each note with the index of the point it belongs to. A note whose moment is
+// not on the chart (older than the first point) is left out.
+function placeNotes(points, notes) {
+  var out = []
+  if (!points || !notes || points.length === 0) return out
+  for (var n = 0; n < notes.length; n++) {
+    var at = notes[n].at
+    var lo = 0, hi = points.length - 1
+    while (lo < hi) {
+      var mid = (lo + hi) >> 1
+      if (points[mid][0] < at) lo = mid + 1
+      else hi = mid
+    }
+    if (lo > 0 && at - points[lo - 1][0] < points[lo][0] - at) lo--
+    if (Math.abs(points[lo][0] - at) > HEART_BREAK_SECONDS) continue
+    out.push({ index: lo, at: at, kind: notes[n].kind, text: notes[n].text })
+  }
+  return out
+}
+
+function formatClock(unixSeconds) {
+  var d = new Date(unixSeconds * 1000)
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0")
+}
+
+function formatLoad(speed, incline) {
+  if (!(speed > 0)) return "belt stopped"
+  return Number(speed).toFixed(1) + " km/h, " + Math.round(incline) + "%"
+}
+
+// The line above the chart while the cursor is on it.
+function heartCaption(point) {
+  return formatClock(point[0]) + " · " + point[1] + " bpm · " + formatLoad(point[2], point[3])
+}
+
+// The same line with the cursor elsewhere: the live rate and today's span.
+function heartSummary(points, bpm, strapState) {
+  var parts = []
+  if (strapState === "connected") parts.push(bpm > 0 ? bpm + " bpm now" : "strap on, no reading yet")
+  else if (strapState === "connecting") parts.push("connecting to the strap...")
+  if (points && points.length > 0) {
+    var low = points[0][1], high = points[0][1]
+    for (var i = 1; i < points.length; i++) {
+      if (points[i][1] < low) low = points[i][1]
+      if (points[i][1] > high) high = points[i][1]
+    }
+    parts.push(low + "–" + high + " bpm today")
+  }
+  if (strapState !== "connected" && strapState !== "connecting" && parts.length > 0)
+    parts.push("strap away")
+  return parts.join(" · ")
+}

@@ -26,7 +26,9 @@
       "startSpeed": 2.5,
       "startIncline": 3,
       "strideMeters": 0,
-      "phonePort": 0
+      "phonePort": 0,
+      "heartAddress": "",
+      "heartLimit": 150
     },
     "schema": [
       {
@@ -58,6 +60,16 @@
         "key": "phonePort",
         "type": "number",
         "label": "Apple Health sync port (0 = off)"
+      },
+      {
+        "key": "heartAddress",
+        "type": "string",
+        "label": "Heart rate strap address (empty = any strap, off = none)"
+      },
+      {
+        "key": "heartLimit",
+        "type": "number",
+        "label": "Note a heart rate above (bpm, 0 = off)"
       }
     ]
   }

@@ -187,6 +187,13 @@ Panel {
   readonly property var dayAverage: service ? Model.averageSteps(service.history)
                                             : ({ steps: 0, days: 0 })
 
+  // The heart rate section shows up with the first reading of the day, or
+  // with a strap in reach. Without a strap the panel is what it was before.
+  readonly property bool hasHeart: service
+    ? service.heartPoints.length > 0
+      || service.heartState === "connected" || service.heartState === "connecting"
+    : false
+
   property var hoveredDay: null
   // Only the day under the cursor. The average sits below the grid and repeating
   // it here showed the same number twice. The header row takes its height from
@@ -476,6 +483,49 @@ Panel {
 
 
         PanelSeparator { width: parent.width }
+
+        // ---- heart rate: today's chart, with the bridge's notes pinned to it
+        Column {
+          visible: root.hasHeart
+          width: parent.width
+          spacing: Style.space(6)
+
+          // One line above the chart: the point under the cursor, otherwise
+          // the live rate. Fixed height, as above the grid, so nothing jumps.
+          Text {
+            width: parent.width
+            height: Math.round(Style.font.caption * 1.7)
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+            text: heartChart.hoverPoint
+                  ? Model.heartCaption(heartChart.hoverPoint)
+                  : (root.service ? Model.heartSummary(root.service.heartPoints,
+                                                       root.service.heartBpm,
+                                                       root.service.heartState) : "")
+            color: root.fg
+            opacity: 0.75
+            font.family: root.family
+            font.pixelSize: Style.font.caption
+          }
+
+          HeartChart {
+            id: heartChart
+            x: Style.space(16)
+            width: parent.width - Style.space(32)
+            height: implicitHeight
+            // Bound only while the panel is open: the points change every
+            // five seconds, and a closed panel has nobody to redraw for.
+            points: root.service && root.opened ? root.service.heartPoints : []
+            notes: root.service && root.opened ? root.service.heartNotes : []
+            foreground: root.fg
+            accent: Color.accent
+            urgent: root.bar ? root.bar.urgent : Color.urgent
+            fontFamily: root.family
+          }
+        }
+
+        PanelSeparator { visible: root.hasHeart; width: parent.width }
 
         // ---- grid of the last 13 weeks
         Column {
