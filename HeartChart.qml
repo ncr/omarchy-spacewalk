@@ -21,7 +21,10 @@ Item {
   property color background: Color.popups.background
   property string fontFamily: Style.font.family
 
-  implicitHeight: Style.space(72)
+  // The plot, and under it the row of clock times.
+  readonly property real plotHeight: Style.space(72)
+  readonly property real axisHeight: Math.round(Style.font.caption * 1.9)
+  implicitHeight: plotHeight + axisHeight
 
   // Room on the left for the two scale numbers.
   readonly property real gutter: Style.space(26)
@@ -37,7 +40,7 @@ Item {
   readonly property var range: Model.heartRange(points, first)
   readonly property var placedNotes: Model.placeNotes(points, notes, first)
   readonly property var segments: Model.heartSegments(points, offsets, first, span,
-                                                      plotWidth, height, range)
+                                                      plotWidth, plotHeight, range)
 
   function toPaths(runs) {
     return runs.map(function(run) { return run.map(function(p) { return Qt.point(p[0], p[1]) }) })
@@ -57,7 +60,7 @@ Item {
   // starts an empty chart while the cursor still rests on the old one.
   function pointY(index) {
     if (index < first || index >= points.length) return 0
-    return Model.heartLineY(index, points, offsets, first, span, plotWidth, height, range)
+    return Model.heartLineY(index, points, offsets, first, span, plotWidth, plotHeight, range)
   }
 
   // All markers sit on the line. What the belt did is drawn in the text
@@ -112,7 +115,7 @@ Item {
       required property var modelData
       required property int index
       width: chart.gutter - Style.space(6)
-      y: index === 0 ? -Math.round(height * 0.3) : chart.height - Math.round(height * 0.7)
+      y: index === 0 ? -Math.round(height * 0.3) : chart.plotHeight - Math.round(height * 0.7)
       horizontalAlignment: Text.AlignRight
       text: modelData
       color: chart.foreground
@@ -126,7 +129,7 @@ Item {
     id: plot
     x: chart.gutter
     width: chart.plotWidth
-    height: chart.height
+    height: chart.plotHeight
 
     // Guard over the whole plot, as on the day grid: on a fast move the
     // MouseArea's exit can fail to arrive and the last readout would stick.
@@ -244,6 +247,35 @@ Item {
       onPositionChanged: function(mouse) { chart.track(mouse.x) }
       onExited: chart.release()
       onWheel: function(wheel) { chart.turn(wheel.angleDelta.y); wheel.accepted = true }
+    }
+  }
+  // The time axis. A monospace digit is about 0.6 of the font size wide, which
+  // is what the spacing of the labels is worked out from.
+  Repeater {
+    model: Model.heartTicks(chart.points, chart.offsets, chart.first, chart.span,
+                            chart.plotWidth, Style.font.caption * 0.62)
+    Item {
+      required property var modelData
+      x: chart.gutter + modelData.x
+      y: chart.plotHeight
+
+      Rectangle {
+        x: -0.5
+        width: 1
+        height: Style.space(3)
+        color: Util.alpha(chart.foreground, 0.3)
+      }
+
+      Text {
+        // Centred under its tick, but kept inside the plot at both ends.
+        x: Math.max(-modelData.x, Math.min(-width / 2, chart.plotWidth - modelData.x - width))
+        y: Style.space(4)
+        text: modelData.text
+        color: chart.foreground
+        opacity: 0.45
+        font.family: chart.fontFamily
+        font.pixelSize: Style.font.caption
+      }
     }
   }
 }

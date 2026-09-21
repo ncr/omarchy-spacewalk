@@ -321,6 +321,46 @@ function heartLineY(index, points, offsets, first, span, width, height, range) {
   return heartY(sum / count, range, height)
 }
 
+// The time axis: clock times at round moments, as many as fit. The step
+// follows the zoom — 10 s apart at the closest, hours apart for a whole day —
+// and the moments are round on the local clock (:00, :05, :10), not counted
+// from the first point. Returns [{x, text}].
+//
+// The axis is strap data, not the clock, so the labels need not be evenly
+// spaced: across a stretch with the strap away the clock jumps. A moment that
+// fell into such a stretch has no place on the chart and gets no label, and a
+// label that would crowd the one before it is left out.
+var HEART_TICK_STEPS = [10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600]
+
+function heartTicks(points, offsets, first, span, width, charWidth) {
+  var out = []
+  if (!points || points.length === 0) return out
+  var step = HEART_TICK_STEPS[HEART_TICK_STEPS.length - 1], gap = 0
+  for (var s = 0; s < HEART_TICK_STEPS.length; s++) {
+    // "12:34:50" under a minute's step, "12:34" otherwise, plus breathing room.
+    gap = ((HEART_TICK_STEPS[s] < 60 ? 8 : 5) + 3) * charWidth
+    if (span / HEART_TICK_STEPS[s] <= width / gap) { step = HEART_TICK_STEPS[s]; break }
+  }
+  var start = points[first][0], end = points[points.length - 1][0]
+  // Round on the local clock: shift into local time, round up, shift back.
+  var shift = new Date(start * 1000).getTimezoneOffset() * 60
+  var moment = Math.ceil((start - shift) / step) * step + shift
+  var lastX = -gap, lo = first
+  for (var guard = 0; moment <= end && guard < 5000; moment += step, guard++) {
+    while (lo < points.length - 1 && points[lo][0] < moment) lo++
+    var index = lo > first && moment - points[lo - 1][0] < points[lo][0] - moment ? lo - 1 : lo
+    if (Math.abs(points[index][0] - moment) > HEART_BREAK_SECONDS) continue
+    var x = heartX(index, offsets, span, width)
+    if (x < 0 || x - lastX < gap) continue
+    lastX = x
+    var d = new Date(moment * 1000)
+    var text = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0")
+    if (step < 60) text += ":" + String(d.getSeconds()).padStart(2, "0")
+    out.push({ x: x, text: text })
+  }
+  return out
+}
+
 // Indexes of the shown points that come right after the strap was away.
 function heartBreaks(points, first) {
   var out = []

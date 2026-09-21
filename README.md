@@ -74,7 +74,9 @@ chart — hover a marker to read it:
 
 The mouse wheel zooms the chart, anchored to the right edge: the newest point
 stays put and the wheel sets how many minutes back from it fit the width (two
-minutes at the closest; all the way out is the whole day). The closer the
+minutes at the closest; all the way out is the whole day). The clock times
+under the chart follow the zoom too, from hours apart down to 10 s apart,
+always at round moments. The closer the
 zoom, the finer the line: zoomed out, a spot on it is the mean of up to a
 minute of readings; zoomed in, every second gets its own and the line moves
 once a second.
