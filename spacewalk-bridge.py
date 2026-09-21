@@ -1209,7 +1209,12 @@ class Bridge:
             # the time this just listens in on the scans for the treadmill.
             treadmill_up = bool(self.client and self.client.is_connected)
             try:
-                hit = await self.radio.wait_for(self.is_strap, 20.0, drives=treadmill_up)
+                # Listening in is kept short: it cannot tell that the treadmill
+                # has connected meanwhile and that nobody scans any more. At a
+                # restart that happens within seconds, and a full-length wait
+                # left the strap unlooked-for for 20 s (2026-09-21).
+                hit = await self.radio.wait_for(self.is_strap, 20.0 if treadmill_up else 3.0,
+                                                drives=treadmill_up)
                 if hit is not None:
                     misses = 0
                     await self.heart_session(*hit)
