@@ -12,6 +12,7 @@ With a heart rate strap in reach (any Bluetooth strap with the standard Heart
 Rate service), also:
 
     {"t":"heart","state":"connected","bpm":104,"device":"...","battery":100}
+        state: off | idle | scanning | connecting | connected
     {"t":"hr_point","point":[1758196800,104,2.5,3,1]}   one a second
     {"t":"hr_note","at":1758196800,"kind":"jump","text":"..."}
     {"t":"hr_series","reset":true,"notes":[...]}        reply to heart-series,
@@ -1208,6 +1209,9 @@ class Bridge:
             # is connected — a walk is about to start or under way. The rest of
             # the time this just listens in on the scans for the treadmill.
             treadmill_up = bool(self.client and self.client.is_connected)
+            # "scanning" only when this loop runs the scan itself; listening in
+            # is not something the panel has to tell anyone about.
+            self.publish_heart("scanning" if treadmill_up else "idle")
             try:
                 # Listening in is kept short: it cannot tell that the treadmill
                 # has connected meanwhile and that nobody scans any more. At a
@@ -1226,6 +1230,7 @@ class Bridge:
                 continue
             if treadmill_up:
                 misses += 1
+                self.publish_heart("idle")
                 await asyncio.sleep(40.0 if misses < 5 else 100.0)
             else:
                 misses = 0

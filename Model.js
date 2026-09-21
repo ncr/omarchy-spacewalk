@@ -416,10 +416,11 @@ function heartCaption(point) {
 }
 
 // The same line with the cursor elsewhere: the live rate and today's span.
-function heartSummary(points, bpm, strapState) {
+function heartSummary(points, bpm, strapState, strapName) {
   var parts = []
-  if (strapState === "connected") parts.push(bpm > 0 ? bpm + " bpm now" : "strap on, no reading yet")
-  else if (strapState === "connecting") parts.push("connecting to the strap...")
+  if (strapState === "connected") parts.push(bpm > 0 ? bpm + " bpm now" : "strap on, waiting for a reading")
+  else if (strapState === "connecting") parts.push("connecting to strap" + (strapName ? " " + strapName : "") + "...")
+  else if (strapState === "scanning") parts.push("looking for the strap...")
   if (points && points.length > 0) {
     var low = points[0][1], high = points[0][1]
     for (var i = 1; i < points.length; i++) {
@@ -428,7 +429,7 @@ function heartSummary(points, bpm, strapState) {
     }
     parts.push(low + "–" + high + " bpm today")
   }
-  if (strapState !== "connected" && strapState !== "connecting" && parts.length > 0)
-    parts.push("strap away")
+  if (["connected", "connecting", "scanning"].indexOf(strapState) === -1 && parts.length > 0)
+    parts.push(strapState === "off" ? "strap turned off in settings" : "strap away")
   return parts.join(" · ")
 }

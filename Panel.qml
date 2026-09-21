@@ -64,15 +64,25 @@ Panel {
 
   // Trouble is described matter-of-factly; only when all is well does the
   // carousel run in this line (following omaphones).
+  //
+  // Every state names the device it is about: with a strap there are two
+  // links, and a bare "connecting..." said nothing about which one.
   readonly property string problemLabel: {
     if (!service) return "no service"
-    if (service.reconnecting) return "restarting..."
+    if (service.reconnecting) return "restarting the bridge..."
     switch (service.linkState) {
-      case "connecting": return "connecting..."
+      case "starting": return "starting the bridge..."
+      case "releasing": return "dropping a stale treadmill link..."
       case "scanning": return "looking for the treadmill..."
+      case "found": return "treadmill found..."
+      case "connecting": return "connecting to the treadmill..."
       case "not_found": return "treadmill out of reach — flip its power switch"
-      case "disconnected": return "disconnected"
-      case "connected": return ""
+      case "disconnected": return "treadmill disconnected"
+      case "stopping": return "bridge shutting down..."
+      // The strap takes ten seconds or so to connect, and the chart stands
+      // still meanwhile. Looking for a strap is not shown here: without one it
+      // would come up every minute for good.
+      case "connected": return service.heartState === "connecting" ? "connecting to the strap..." : ""
       default: return service.linkState
     }
   }
@@ -511,7 +521,8 @@ Panel {
                   ? Model.heartCaption(heartChart.hoverPoint)
                   : (root.service ? Model.heartSummary(root.service.heartPoints,
                                                        root.service.heartBpm,
-                                                       root.service.heartState) : "")
+                                                       root.service.heartState,
+                                                       root.service.heartDevice) : "")
                     + (heartChart.zoomLabel !== "" ? " · " + heartChart.zoomLabel : "")
             color: root.fg
             opacity: 0.75

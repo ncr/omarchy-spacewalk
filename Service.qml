@@ -31,7 +31,9 @@ Item {
   // State read by the widget and the panel.
   // Not "state": that is a built-in Item property and Qt's own state mechanism.
   property string today: ""
-  property string linkState: "starting"  // starting | scanning | connecting | connected | disconnected | not_found
+  // The treadmill link: starting | releasing | scanning | found | connecting |
+  // connected | disconnected | not_found | stopping
+  property string linkState: "starting"
   property bool connected: linkState === "connected"
   property real speed: 0
   property real incline: 0
@@ -65,7 +67,8 @@ Item {
   // the disk every time the panel opens.
   property var history: ({})
   readonly property bool paused: beltState === "paused"
-  // The strap: off | idle | connecting | connected. heartBpm 0 means no reading.
+  // The strap: off | idle | scanning | connecting | connected. heartBpm 0 means
+  // no reading.
   property string heartState: "idle"
   property int heartBpm: 0
   property string heartDevice: ""
