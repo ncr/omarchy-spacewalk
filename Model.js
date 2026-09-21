@@ -198,21 +198,33 @@ function heartY(bpm, range, height) {
   return Math.round((1 - share) * (height - 2)) + 1
 }
 
-// The line as [x, y] runs, cut wherever the strap was away.
+// The line as [x, y] runs, in two sets — belt running and belt stopped — so
+// the chart can draw them in different colours. A run ends where the strap was
+// away, and where the belt started or stopped; there the next run begins at
+// the previous point, so the line stays in one piece.
 function heartSegments(points, width, height, range) {
-  var out = [], run = []
+  var out = { walking: [], resting: [] }
+  var run = [], walking = false
   var step = heartStep(points.length, width)
-  for (var i = 0; i < points.length; i++) {
-    if (i > 0 && points[i][0] - points[i - 1][0] > HEART_BREAK_SECONDS) {
-      out.push(run)
-      run = []
-    }
-    run.push([i * step, heartY(points[i][1], range, height)])
-  }
-  if (run.length > 0) out.push(run)
-  for (var k = 0; k < out.length; k++)
+  function close() {
     // A lone point has no line to it; doubled, the round cap draws it as a dot.
-    if (out[k].length === 1) out[k].push([out[k][0][0] + 0.01, out[k][0][1]])
+    if (run.length === 1) run.push([run[0][0] + 0.01, run[0][1]])
+    if (run.length > 0) (walking ? out.walking : out.resting).push(run)
+    run = []
+  }
+  for (var i = 0; i < points.length; i++) {
+    var spot = [i * step, heartY(points[i][1], range, height)]
+    var nowWalking = points[i][2] > 0
+    var broken = i > 0 && points[i][0] - points[i - 1][0] > HEART_BREAK_SECONDS
+    if (i > 0 && (broken || nowWalking !== walking)) {
+      var previous = run[run.length - 1]
+      close()
+      if (!broken) run.push(previous)
+    }
+    walking = nowWalking
+    run.push(spot)
+  }
+  close()
   return out
 }
 
@@ -230,11 +242,13 @@ function heartIndexAt(x, count, width) {
 }
 
 // Each note with the index of the point it belongs to. A note whose moment is
-// not on the chart (older than the first point) is left out.
+// not on the chart (older than the first point) is left out, and so is the
+// belt starting or stopping: the colour of the line says that already.
 function placeNotes(points, notes) {
   var out = []
   if (!points || !notes || points.length === 0) return out
   for (var n = 0; n < notes.length; n++) {
+    if (notes[n].kind === "belt") continue
     var at = notes[n].at
     var lo = 0, hi = points.length - 1
     while (lo < hi) {

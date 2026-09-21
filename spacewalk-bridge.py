@@ -647,13 +647,14 @@ class HeartNotes:
         if load == self.shown_load or now - self.load_since < self.LOAD_SETTLE:
             return []
         before, self.shown_load = self.shown_load, load
+        # "belt" and "load" apart: the chart shows a running belt by the colour
+        # of its line and only marks the changes made while walking.
         if load[0] <= 0:
-            text = "Belt stopped"
-        elif before[0] <= 0:
-            text = f"Belt started: {load[0]:.1f} km/h, {load[1]}%"
-        else:
-            text = f"Now {load[0]:.1f} km/h, {load[1]}% (was {before[0]:.1f} km/h, {before[1]}%)"
-        return [{"kind": "load", "text": text}]
+            return [{"kind": "belt", "text": "Belt stopped"}]
+        if before[0] <= 0:
+            return [{"kind": "belt", "text": f"Belt started: {load[0]:.1f} km/h, {load[1]}%"}]
+        return [{"kind": "load", "text": f"Now {load[0]:.1f} km/h, {load[1]}% "
+                                         f"(was {before[0]:.1f} km/h, {before[1]}%)"}]
 
     def check_recovery(self, now: float) -> list[dict]:
         if self.recovery is None or now < self.recovery["due"]:

@@ -163,7 +163,8 @@ class HeartNotesTests(unittest.TestCase):
     def test_belt_ramp_gives_one_marker(self):
         ramp = [(1, 90, speed / 10, 0) for speed in range(10, 26)]
         found, _ = self.run_stream(bridge.HeartNotes(), [(30, 90, 0, 0)] + ramp + [(30, 95, 2.5, 0)])
-        self.assertEqual([note["text"] for _, note in found], ["Belt started: 2.5 km/h, 0%"])
+        self.assertEqual([(note["kind"], note["text"]) for _, note in found],
+                         [("belt", "Belt started: 2.5 km/h, 0%")])
 
     def test_fall(self):
         found, _ = self.run_stream(bridge.HeartNotes(), [(200, 130, 2.5, 3), (30, 100, 2.5, 3)])
@@ -173,7 +174,7 @@ class HeartNotesTests(unittest.TestCase):
         found, _ = self.run_stream(bridge.HeartNotes(), [
             (400, 112, 3.0, 3),
             (70, lambda now: max(90, 112 - (now - 400) * 0.4), 0, 0)])
-        self.assertEqual(self.kinds(found), ["load", "recovery"])
+        self.assertEqual(self.kinds(found), ["belt", "recovery"])
         self.assertEqual(found[1][1]["text"], "Recovery: 112 to 90 bpm in the minute after stopping")
 
     def test_no_recovery_after_a_short_walk(self):

@@ -15,6 +15,9 @@ Item {
   property color foreground: Color.foreground
   property color accent: Color.accent
   property color urgent: Color.urgent
+  // What the panel card is painted with: a load marker is a ring, and its
+  // middle has to cover the line under it.
+  property color background: Color.popups.background
   property string fontFamily: Style.font.family
 
   implicitHeight: Style.space(72)
@@ -25,6 +28,11 @@ Item {
   readonly property var range: Model.heartRange(points)
   readonly property real step: Model.heartStep(points.length, plotWidth)
   readonly property var placedNotes: Model.placeNotes(points, notes)
+  readonly property var segments: Model.heartSegments(points, plotWidth, height, range)
+
+  function toPaths(runs) {
+    return runs.map(function(run) { return run.map(function(p) { return Qt.point(p[0], p[1]) }) })
+  }
 
   property int hoverIndex: -1
   readonly property var hoverPoint: hoverIndex >= 0 && hoverIndex < points.length
@@ -40,12 +48,14 @@ Item {
     return Model.heartY(points[index][1], range, height)
   }
 
-  // A speed or incline change says what the belt did; the rest say what the
-  // heart did. The first sits on the bottom edge, the second on the line.
+  // All markers sit on the line. A speed or incline change made while walking
+  // says what the belt did and is a ring; the rest say what the heart did and
+  // are filled: sudden ones in the urgent colour, slow ones in the text colour.
+  // None takes the accent — that is the colour of the line while the belt runs.
   function isLoad(note) { return note.kind === "load" }
   function noteColor(note) {
-    if (isLoad(note)) return Util.alpha(foreground, 0.6)
-    return note.kind === "drift" || note.kind === "recovery" ? accent : urgent
+    if (isLoad(note)) return background
+    return note.kind === "drift" || note.kind === "recovery" ? foreground : urgent
   }
 
   function track(x) {
@@ -111,21 +121,28 @@ Item {
       }
     }
 
+    // Belt stopped: dimmed. Belt running: the accent at full strength. The
+    // difference in strength carries it in themes whose accent is the text colour.
     Shape {
       anchors.fill: parent
       preferredRendererType: Shape.CurveRenderer
 
       ShapePath {
-        strokeColor: chart.foreground
+        strokeColor: Util.alpha(chart.foreground, 0.4)
         strokeWidth: 1.5
         fillColor: "transparent"
         capStyle: ShapePath.RoundCap
         joinStyle: ShapePath.RoundJoin
+        PathMultiline { paths: chart.toPaths(chart.segments.resting) }
+      }
 
-        PathMultiline {
-          paths: Model.heartSegments(chart.points, plot.width, plot.height, chart.range)
-            .map(function(run) { return run.map(function(p) { return Qt.point(p[0], p[1]) }) })
-        }
+      ShapePath {
+        strokeColor: chart.accent
+        strokeWidth: 1.5
+        fillColor: "transparent"
+        capStyle: ShapePath.RoundCap
+        joinStyle: ShapePath.RoundJoin
+        PathMultiline { paths: chart.toPaths(chart.segments.walking) }
       }
     }
 
@@ -144,15 +161,15 @@ Item {
         required property var modelData
         readonly property bool active: chart.activeNote !== null
           && chart.activeNote.at === modelData.at && chart.activeNote.kind === modelData.kind
-        readonly property real size: chart.isLoad(modelData)
-          ? Style.space(active ? 6 : 4) : Style.space(active ? 9 : 6)
+        readonly property real size: Style.space(active ? 9 : 6)
         width: size
         height: size
-        radius: chart.isLoad(modelData) ? 1 : size / 2
+        radius: size / 2
         x: chart.pointX(modelData.index) - size / 2
-        y: chart.isLoad(modelData) ? plot.height - size
-                                   : chart.pointY(modelData.index) - size / 2
+        y: chart.pointY(modelData.index) - size / 2
         color: chart.noteColor(modelData)
+        border.width: chart.isLoad(modelData) ? 1.5 : 0
+        border.color: chart.foreground
       }
     }
 
@@ -163,8 +180,7 @@ Item {
       width: 1
       height: 1
       x: chart.activeNote ? chart.pointX(chart.activeNote.index) : 0
-      y: chart.activeNote && !chart.isLoad(chart.activeNote)
-         ? chart.pointY(chart.activeNote.index) - Style.space(6) : 0
+      y: chart.activeNote ? chart.pointY(chart.activeNote.index) - Style.space(6) : 0
 
       PanelToolTip {
         delay: 0
