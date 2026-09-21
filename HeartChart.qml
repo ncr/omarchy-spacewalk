@@ -10,6 +10,7 @@ import "Model.js" as Model
 Item {
   id: chart
 
+  // Everything the day has; the chart draws `shown`, the part the zoom leaves.
   property var points: []
   property var notes: []
   property color foreground: Color.foreground
@@ -25,27 +26,33 @@ Item {
   // Room on the left for the two scale numbers.
   readonly property real gutter: Style.space(26)
   readonly property real plotWidth: Math.max(1, width - gutter)
-  readonly property var range: Model.heartRange(points)
-  readonly property real step: Model.heartStep(points.length, plotWidth)
-  readonly property var placedNotes: Model.placeNotes(points, notes)
-  readonly property var segments: Model.heartSegments(points, plotWidth, height, range)
+  // The wheel zooms, anchored to the right edge: the newest point stays put and
+  // `zoom` says how many points back from it fit the width. 0 shows them all.
+  property int zoom: 0
+  readonly property var shown: Model.heartWindow(points, zoom)
+  readonly property int span: Model.heartSpan(shown.length, zoom)
+  readonly property string zoomLabel: Model.heartZoomLabel(zoom)
+  readonly property var range: Model.heartRange(shown)
+  readonly property real step: Model.heartStep(span, plotWidth)
+  readonly property var placedNotes: Model.placeNotes(shown, notes)
+  readonly property var segments: Model.heartSegments(shown, plotWidth, height, range, span)
 
   function toPaths(runs) {
     return runs.map(function(run) { return run.map(function(p) { return Qt.point(p[0], p[1]) }) })
   }
 
   property int hoverIndex: -1
-  readonly property var hoverPoint: hoverIndex >= 0 && hoverIndex < points.length
-    ? points[hoverIndex] : null
+  readonly property var hoverPoint: hoverIndex >= 0 && hoverIndex < shown.length
+    ? shown[hoverIndex] : null
   // The note whose marker the cursor is near, or null.
   property var activeNote: null
 
-  function pointX(index) { return index * step }
+  function pointX(index) { return Model.heartX(index, shown.length, span, plotWidth) }
   // A marker can outlive its point for a moment: past midnight the bridge
   // starts an empty chart while the cursor still rests on the old one.
   function pointY(index) {
-    if (index < 0 || index >= points.length) return 0
-    return Model.heartY(points[index][1], range, height)
+    if (index < 0 || index >= shown.length) return 0
+    return Model.heartY(shown[index][1], range, height)
   }
 
   // All markers sit on the line. What the belt did is drawn in the text
@@ -65,8 +72,11 @@ Item {
     return Style.space(active ? 9 : 7)
   }
 
+  property real cursorX: -1
+
   function track(x) {
-    hoverIndex = Model.heartIndexAt(x, points.length, plotWidth)
+    cursorX = x
+    hoverIndex = Model.heartIndexAt(x, shown.length, span, plotWidth)
     var reach = Style.space(7)
     var nearest = null
     for (var i = 0; i < placedNotes.length; i++) {
@@ -76,7 +86,19 @@ Item {
     activeNote = nearest
   }
 
-  function release() { hoverIndex = -1; activeNote = null }
+  function release() { cursorX = -1; hoverIndex = -1; activeNote = null }
+
+  // A touchpad sends the wheel in small pieces; one notch is 120 of them.
+  property real wheelRest: 0
+  function turn(delta) {
+    wheelRest += delta
+    while (Math.abs(wheelRest) >= 120) {
+      zoom = Model.heartZoom(zoom, points.length, wheelRest > 0)
+      wheelRest -= wheelRest > 0 ? 120 : -120
+    }
+    // The cursor has not moved, but another point is under it now.
+    if (cursorX >= 0) track(cursorX)
+  }
 
   // The scale: the top and bottom of the range, in the gutter.
   Repeater {
@@ -118,7 +140,7 @@ Item {
 
     // Where the strap was away: the points on either side are not neighbours in time.
     Repeater {
-      model: Model.heartBreaks(chart.points)
+      model: Model.heartBreaks(chart.shown)
       Rectangle {
         required property var modelData
         x: Math.round(chart.pointX(modelData) - chart.step / 2)
@@ -215,6 +237,7 @@ Item {
       acceptedButtons: Qt.NoButton
       onPositionChanged: function(mouse) { chart.track(mouse.x) }
       onExited: chart.release()
+      onWheel: function(wheel) { chart.turn(wheel.angleDelta.y); wheel.accepted = true }
     }
   }
 }

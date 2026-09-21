@@ -512,6 +512,7 @@ Panel {
                   : (root.service ? Model.heartSummary(root.service.heartPoints,
                                                        root.service.heartBpm,
                                                        root.service.heartState) : "")
+                    + (heartChart.zoomLabel !== "" ? " · " + heartChart.zoomLabel : "")
             color: root.fg
             opacity: 0.75
             font.family: root.family

@@ -192,13 +192,43 @@ function heartRange(points) {
 
 // Points sit side by side no matter how much clock time lies between them: two
 // walks six hours apart would otherwise be two slivers at the chart's edges.
-// With little data the chart still spans ten minutes, so the first minute of
-// a walk does not stretch across the whole width.
+// The newest point always sits on the right edge and the rest run leftwards
+// from it, `span` points to the chart's width. Unzoomed, the span is all the
+// points there are, but at least ten minutes' worth, so the first minute of a
+// walk does not stretch across the whole width.
 var HEART_MIN_POINTS = 120
+var HEART_ZOOM_MIN_POINTS = 60      // five minutes: the closest the wheel goes
 var HEART_BREAK_SECONDS = 30
 
-function heartStep(count, width) {
-  return width / Math.max(count - 1, HEART_MIN_POINTS - 1)
+function heartSpan(count, zoom) {
+  return zoom > 0 ? zoom : Math.max(count, HEART_MIN_POINTS)
+}
+
+function heartStep(span, width) {
+  return width / Math.max(span - 1, 1)
+}
+
+function heartX(index, count, span, width) {
+  return width - (count - 1 - index) * heartStep(span, width)
+}
+
+// The points the chart shows at a zoom of `zoom` points (0: all of them).
+function heartWindow(points, zoom) {
+  if (!points) return []
+  return zoom > 0 && zoom < points.length ? points.slice(points.length - zoom) : points
+}
+
+// One notch of the wheel: a fifth closer, or a quarter farther. Zooming out
+// past everything there is returns 0, "all", which then grows with the day.
+function heartZoom(zoom, count, closer) {
+  var span = heartSpan(count, zoom)
+  if (closer) return Math.max(HEART_ZOOM_MIN_POINTS, Math.round(span * 0.8))
+  var wider = Math.round(span * 1.25)
+  return wider >= count ? 0 : wider
+}
+
+function heartZoomLabel(zoom) {
+  return zoom > 0 ? formatDuration(zoom * 5) + " shown" : ""
 }
 
 function heartY(bpm, range, height) {
@@ -210,10 +240,9 @@ function heartY(bpm, range, height) {
 // in its own colour. A run ends where the strap was away and where the state
 // changes; there the next run begins at the previous point, so the line stays
 // in one piece.
-function heartSegments(points, width, height, range) {
+function heartSegments(points, width, height, range, span) {
   var out = { resting: [], walking: [], empty: [] }
   var run = [], state = "resting"
-  var step = heartStep(points.length, width)
   function close() {
     // A lone point has no line to it; doubled, the round cap draws it as a dot.
     if (run.length === 1) run.push([run[0][0] + 0.01, run[0][1]])
@@ -221,7 +250,7 @@ function heartSegments(points, width, height, range) {
     run = []
   }
   for (var i = 0; i < points.length; i++) {
-    var spot = [i * step, heartY(points[i][1], range, height)]
+    var spot = [heartX(i, points.length, span, width), heartY(points[i][1], range, height)]
     var nowState = heartState(points[i])
     var broken = i > 0 && points[i][0] - points[i - 1][0] > HEART_BREAK_SECONDS
     if (i > 0 && (broken || nowState !== state)) {
@@ -244,9 +273,10 @@ function heartBreaks(points) {
   return out
 }
 
-function heartIndexAt(x, count, width) {
+function heartIndexAt(x, count, span, width) {
   if (count === 0) return -1
-  return clamp(Math.round(x / heartStep(count, width)), 0, count - 1)
+  var fromRight = Math.round((width - x) / heartStep(span, width))
+  return clamp(count - 1 - fromRight, 0, count - 1)
 }
 
 // Each note with the index of the point it belongs to. A note whose moment is

@@ -72,6 +72,10 @@ chart — hover a marker to read it:
 - a small dot — the belt started or stopped; a ring — speed or incline
   changed during the walk
 
+The mouse wheel zooms the chart, anchored to the right edge: the newest point
+stays put and the wheel sets how many minutes back from it fit the width
+(five minutes at the closest; all the way out is the whole day).
+
 The line is dimmed while the belt stands, takes the accent colour while you
 walk, and the urgent colour while the belt runs with nobody on it (no steps
 for a few seconds), so the walks show at a glance.
