@@ -183,6 +183,28 @@ Item {
     connectDelay.restart()
   }
 
+  // Restart the persistent Bluetooth backend, not only this UI's socket client.
+  // This recovers a scanner stuck after the adapter disappears and returns.
+  readonly property bool reconnecting: reconnectProcess.running
+  function reconnect() {
+    if (reconnecting) return
+    lastError = ""
+    commandPending = false
+    pendingWatchdog.stop()
+    phaseName = ""
+    phaseText = ""
+    reconnectProcess.running = true
+  }
+
+  Process {
+    id: reconnectProcess
+    command: ["systemctl", "--user", "restart", "omarchy-spacewalk.service"]
+    stderr: StdioCollector {}
+    onExited: function(code) {
+      if (code !== 0) root.lastError = "reconnect failed: " + stderr.text.trim()
+    }
+  }
+
   function handleLine(line) {
     var text = String(line).trim()
     if (text === "") return

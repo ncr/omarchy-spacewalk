@@ -66,6 +66,7 @@ Panel {
   // carousel run in this line (following omaphones).
   readonly property string problemLabel: {
     if (!service) return "no service"
+    if (service.reconnecting) return "restarting..."
     switch (service.linkState) {
       case "connecting": return "connecting..."
       case "scanning": return "looking for the treadmill..."
@@ -300,6 +301,14 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      // Release fires once even when R is held down; keep modified shortcuts alone.
+      Keys.onReleased: function(event) {
+        if (event.key === Qt.Key_R && !event.isAutoRepeat
+            && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)) {
+          if (root.service) root.service.reconnect()
+          event.accepted = true
+        }
+      }
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
