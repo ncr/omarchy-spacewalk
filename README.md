@@ -73,8 +73,11 @@ chart — hover a marker to read it:
   changed during the walk
 
 The mouse wheel zooms the chart, anchored to the right edge: the newest point
-stays put and the wheel sets how many minutes back from it fit the width
-(five minutes at the closest; all the way out is the whole day).
+stays put and the wheel sets how many minutes back from it fit the width (two
+minutes at the closest; all the way out is the whole day). The closer the
+zoom, the finer the line: zoomed out, a spot on it is the mean of up to a
+minute of readings; zoomed in, every second gets its own and the line moves
+once a second.
 
 The line is dimmed while the belt stands, takes the accent colour while you
 walk, and the urgent colour while the belt runs with nobody on it (no steps
@@ -83,7 +86,7 @@ for a few seconds), so the walks show at a glance.
 The thresholds are first guesses (`HeartNotes` in `spacewalk-bridge.py`). This
 is a training aid, not a medical device: the strap sends an averaged rate, so
 single irregular beats never show up, and its RR field is just 60000 / bpm.
-Points (one per 5 s) and notes are kept in
+Points (one a second) and notes are kept in
 `~/.local/state/omarchy-spacewalk/heart-YYYY-MM-DD.jsonl`.
 
 Settings: `heartAddress` (empty = any strap, `off` = none), `heartLimit`

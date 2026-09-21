@@ -10,7 +10,7 @@ import "Model.js" as Model
 Item {
   id: chart
 
-  // Everything the day has; the chart draws `shown`, the part the zoom leaves.
+  // Everything the day has; the chart draws the points from `first` on.
   property var points: []
   property var notes: []
   property color foreground: Color.foreground
@@ -27,32 +27,37 @@ Item {
   readonly property real gutter: Style.space(26)
   readonly property real plotWidth: Math.max(1, width - gutter)
   // The wheel zooms, anchored to the right edge: the newest point stays put and
-  // `zoom` says how many points back from it fit the width. 0 shows them all.
+  // `zoom` says how many seconds of strap data back from it fit the width.
+  // 0 shows everything. The closer the zoom, the finer the line is drawn.
   property int zoom: 0
-  readonly property var shown: Model.heartWindow(points, zoom)
-  readonly property int span: Model.heartSpan(shown.length, zoom)
+  readonly property var offsets: Model.heartOffsets(points)
+  readonly property int first: Model.heartFirst(offsets, zoom)
+  readonly property real span: Model.heartSpan(offsets, zoom)
   readonly property string zoomLabel: Model.heartZoomLabel(zoom)
-  readonly property var range: Model.heartRange(shown)
-  readonly property real step: Model.heartStep(span, plotWidth)
-  readonly property var placedNotes: Model.placeNotes(shown, notes)
-  readonly property var segments: Model.heartSegments(shown, plotWidth, height, range, span)
+  readonly property var range: Model.heartRange(points, first)
+  readonly property var placedNotes: Model.placeNotes(points, notes, first)
+  readonly property var segments: Model.heartSegments(points, offsets, first, span,
+                                                      plotWidth, height, range)
 
   function toPaths(runs) {
     return runs.map(function(run) { return run.map(function(p) { return Qt.point(p[0], p[1]) }) })
   }
 
   property int hoverIndex: -1
-  readonly property var hoverPoint: hoverIndex >= 0 && hoverIndex < shown.length
-    ? shown[hoverIndex] : null
+  readonly property var hoverPoint: hoverIndex >= first && hoverIndex < points.length
+    ? points[hoverIndex] : null
   // The note whose marker the cursor is near, or null.
   property var activeNote: null
 
-  function pointX(index) { return Model.heartX(index, shown.length, span, plotWidth) }
+  function pointX(index) {
+    if (index < 0 || index >= offsets.length) return 0
+    return Model.heartX(index, offsets, span, plotWidth)
+  }
   // A marker can outlive its point for a moment: past midnight the bridge
   // starts an empty chart while the cursor still rests on the old one.
   function pointY(index) {
-    if (index < 0 || index >= shown.length) return 0
-    return Model.heartY(shown[index][1], range, height)
+    if (index < first || index >= points.length) return 0
+    return Model.heartLineY(index, points, offsets, first, span, plotWidth, height, range)
   }
 
   // All markers sit on the line. What the belt did is drawn in the text
@@ -76,7 +81,7 @@ Item {
 
   function track(x) {
     cursorX = x
-    hoverIndex = Model.heartIndexAt(x, shown.length, span, plotWidth)
+    hoverIndex = Model.heartIndexAt(x, offsets, first, span, plotWidth)
     var reach = Style.space(7)
     var nearest = null
     for (var i = 0; i < placedNotes.length; i++) {
@@ -93,7 +98,7 @@ Item {
   function turn(delta) {
     wheelRest += delta
     while (Math.abs(wheelRest) >= 120) {
-      zoom = Model.heartZoom(zoom, points.length, wheelRest > 0)
+      zoom = Model.heartZoom(zoom, offsets, wheelRest > 0)
       wheelRest -= wheelRest > 0 ? 120 : -120
     }
     // The cursor has not moved, but another point is under it now.
@@ -140,10 +145,11 @@ Item {
 
     // Where the strap was away: the points on either side are not neighbours in time.
     Repeater {
-      model: Model.heartBreaks(chart.shown)
+      model: Model.heartBreaks(chart.points, chart.first)
       Rectangle {
         required property var modelData
-        x: Math.round(chart.pointX(modelData) - chart.step / 2)
+        // In the middle of the squeezed stretch between the two points.
+        x: Math.round((chart.pointX(modelData) + chart.pointX(modelData - 1)) / 2)
         width: 1
         height: plot.height
         color: Util.alpha(chart.foreground, 0.22)

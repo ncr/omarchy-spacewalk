@@ -70,12 +70,13 @@ Item {
   property int heartBpm: 0
   property string heartDevice: ""
   property int heartBattery: -1
-  // Today's chart. Points are [unix time, bpm, speed, incline], one per 5 s;
+  // Today's chart. Points are [unix time, bpm, speed, incline, walking], one a
+  // second (six hours' worth are kept);
   // notes are {at, kind, text, bpm}. The bridge keeps both on disk and sends
   // them whole on "heart-series", then point by point.
   property var heartPoints: []
   property var heartNotes: []
-  readonly property int heartPointsMax: 4320
+  readonly property int heartPointsMax: 21600
   // Where the open panel's card sits on screen ("x y w h"), published by
   // Panel.qml for tools/hero-set; empty string when the panel is closed.
   property string panelRect: ""

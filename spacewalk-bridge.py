@@ -12,7 +12,7 @@ With a heart rate strap in reach (any Bluetooth strap with the standard Heart
 Rate service), also:
 
     {"t":"heart","state":"connected","bpm":104,"device":"...","battery":100}
-    {"t":"hr_point","point":[1758196800,104,2.5,3,1]}   one per 5 s
+    {"t":"hr_point","point":[1758196800,104,2.5,3,1]}   one a second
     {"t":"hr_note","at":1758196800,"kind":"jump","text":"..."}
     {"t":"hr_series","reset":true,"notes":[...]}        reply to heart-series,
     {"t":"hr_series","points":[[...],...]}              in chunks
@@ -211,14 +211,15 @@ def write_state(path: Path, text: str):
         raise
 
 
-def append_state(path: Path, text: str):
+def append_state(path: Path, text: str, sync: bool = True):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         data = text.encode("utf-8")
         while data:
             data = data[os.write(fd, data):]
-        os.fsync(fd)
+        if sync:
+            os.fsync(fd)
     finally:
         os.close(fd)
 
@@ -517,8 +518,10 @@ def read_history(days: int = HISTORY_DAYS) -> dict:
 
 # ----------------------------------------------------------------- heart rate
 
-HEART_POINT_SECONDS = 5
-HEART_SERIES_MAX = 4320     # six hours of points: what the chart gets
+# The strap sends two readings a second; a point is their mean. The chart
+# averages further by itself when zoomed out, and draws every point zoomed in.
+HEART_POINT_SECONDS = 1
+HEART_SERIES_MAX = 21600    # six hours of points: what the chart gets
 # The service host reads the bridge's stdout with asyncio's default 64 KB line
 # limit and dies on a longer line, so the series travels in chunks.
 HEART_SERIES_CHUNK = 500
@@ -775,7 +778,10 @@ class HeartDay:
         kept.append(value)
         del kept[:-cap]
         try:
-            append_state(self.path, json.dumps({key: value}, separators=(",", ":")) + "\n")
+            # A point a second is not worth a disk flush each: losing the last
+            # few to a power cut costs nothing. Notes are rare and are flushed.
+            append_state(self.path, json.dumps({key: value}, separators=(",", ":")) + "\n",
+                         sync=key != "p")
         except OSError as exc:
             error(f"cannot save {self.path}: {exc}")
         return rolled

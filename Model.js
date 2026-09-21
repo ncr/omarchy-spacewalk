@@ -165,8 +165,9 @@ function formatDay(date) {
 
 // --------------------------------------------------------------- heart chart
 //
-// A point is [unix time, bpm, speed, incline, walking], one per 5 s of strap
-// data. Points recorded before the walking flag have four items.
+// A point is [unix time, bpm, speed, incline, walking]. The bridge saves one a
+// second; older files have one per 5 s, and points from before the walking
+// flag have four items.
 
 // What the belt and the walker were doing at a point: "resting" (belt
 // stopped), "walking", or "empty" (belt running with nobody on it).
@@ -175,12 +176,78 @@ function heartState(point) {
   return point.length > 4 && !point[4] ? "empty" : "walking"
 }
 
-// The chart's vertical range: the data's own, opened up to at least 30 bpm and
-// snapped to tens, so the scale does not twitch with every new point.
-function heartRange(points) {
+// The horizontal axis is seconds of strap data, not the clock: a stretch with
+// the strap away (longer than HEART_BREAK_SECONDS between two points) is
+// squeezed to HEART_BREAK_WIDTH, or two walks six hours apart would be two
+// slivers at the chart's edges. Not the point count either — files hold points
+// at two rates.
+var HEART_BREAK_SECONDS = 30
+var HEART_BREAK_WIDTH = 5
+var HEART_MIN_SPAN = 600          // unzoomed, the chart spans at least ten minutes
+var HEART_ZOOM_MIN = 120          // two minutes: the closest the wheel goes
+
+// For each point, its place on that axis, counted from the first point.
+function heartOffsets(points) {
+  var out = new Array(points ? points.length : 0)
+  for (var i = 0; i < out.length; i++) {
+    if (i === 0) { out[0] = 0; continue }
+    var gap = points[i][0] - points[i - 1][0]
+    out[i] = out[i - 1] + (gap > HEART_BREAK_SECONDS ? HEART_BREAK_WIDTH : Math.max(gap, 0))
+  }
+  return out
+}
+
+function heartTotal(offsets) {
+  return offsets.length > 0 ? offsets[offsets.length - 1] : 0
+}
+
+// How many seconds the chart's width stands for. `zoom` is that number as set
+// with the wheel; 0 means everything there is.
+function heartSpan(offsets, zoom) {
+  return zoom > 0 ? zoom : Math.max(heartTotal(offsets), HEART_MIN_SPAN)
+}
+
+// First index with offsets[index] >= target.
+function heartSearch(offsets, target) {
+  var lo = 0, hi = offsets.length
+  while (lo < hi) {
+    var mid = (lo + hi) >> 1
+    if (offsets[mid] < target) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+// The first point the chart shows. The newest point always sits on the right
+// edge and the rest run leftwards from it.
+function heartFirst(offsets, zoom) {
+  if (!(zoom > 0)) return 0
+  return Math.min(heartSearch(offsets, heartTotal(offsets) - zoom), Math.max(offsets.length - 1, 0))
+}
+
+function heartX(index, offsets, span, width) {
+  return width - (heartTotal(offsets) - offsets[index]) / span * width
+}
+
+// One notch of the wheel: a fifth closer, or a quarter farther. Zooming out
+// past everything there is returns 0, "all", which then grows with the day.
+function heartZoom(zoom, offsets, closer) {
+  var span = heartSpan(offsets, zoom)
+  if (closer) return Math.max(HEART_ZOOM_MIN, Math.round(span * 0.8))
+  var wider = Math.round(span * 1.25)
+  return wider >= heartTotal(offsets) ? 0 : wider
+}
+
+function heartZoomLabel(zoom) {
+  return zoom > 0 ? formatDuration(zoom) + " shown" : ""
+}
+
+// The chart's vertical range: that of the points shown, opened up to at least
+// 30 bpm and snapped to tens, so the scale does not twitch with every point.
+function heartRange(points, first) {
   if (!points || points.length === 0) return { low: 60, high: 120 }
-  var low = points[0][1], high = points[0][1]
-  for (var i = 1; i < points.length; i++) {
+  var low = points[first || 0][1], high = low
+  for (var i = (first || 0) + 1; i < points.length; i++) {
     if (points[i][1] < low) low = points[i][1]
     if (points[i][1] > high) high = points[i][1]
   }
@@ -190,109 +257,102 @@ function heartRange(points) {
   return { low: low, high: high }
 }
 
-// Points sit side by side no matter how much clock time lies between them: two
-// walks six hours apart would otherwise be two slivers at the chart's edges.
-// The newest point always sits on the right edge and the rest run leftwards
-// from it, `span` points to the chart's width. Unzoomed, the span is all the
-// points there are, but at least ten minutes' worth, so the first minute of a
-// walk does not stretch across the whole width.
-var HEART_MIN_POINTS = 120
-var HEART_ZOOM_MIN_POINTS = 60      // five minutes: the closest the wheel goes
-var HEART_BREAK_SECONDS = 30
-
-function heartSpan(count, zoom) {
-  return zoom > 0 ? zoom : Math.max(count, HEART_MIN_POINTS)
-}
-
-function heartStep(span, width) {
-  return width / Math.max(span - 1, 1)
-}
-
-function heartX(index, count, span, width) {
-  return width - (count - 1 - index) * heartStep(span, width)
-}
-
-// The points the chart shows at a zoom of `zoom` points (0: all of them).
-function heartWindow(points, zoom) {
-  if (!points) return []
-  return zoom > 0 && zoom < points.length ? points.slice(points.length - zoom) : points
-}
-
-// One notch of the wheel: a fifth closer, or a quarter farther. Zooming out
-// past everything there is returns 0, "all", which then grows with the day.
-function heartZoom(zoom, count, closer) {
-  var span = heartSpan(count, zoom)
-  if (closer) return Math.max(HEART_ZOOM_MIN_POINTS, Math.round(span * 0.8))
-  var wider = Math.round(span * 1.25)
-  return wider >= count ? 0 : wider
-}
-
-function heartZoomLabel(zoom) {
-  return zoom > 0 ? formatDuration(zoom * 5) + " shown" : ""
-}
-
 function heartY(bpm, range, height) {
   var share = (bpm - range.low) / (range.high - range.low)
-  return Math.round((1 - share) * (height - 2)) + 1
+  return (1 - share) * (height - 2) + 1
 }
 
 // The line as [x, y] runs, one set per heartState, so the chart can draw each
 // in its own colour. A run ends where the strap was away and where the state
-// changes; there the next run begins at the previous point, so the line stays
+// changes; there the next run begins at the previous spot, so the line stays
 // in one piece.
-function heartSegments(points, width, height, range, span) {
+//
+// How finely it is drawn follows the zoom: points that land within half a
+// pixel of each other become one spot at their mean. Zoomed out that is a
+// minute of readings per spot, zoomed in every second gets its own.
+function heartSegments(points, offsets, first, span, width, height, range) {
   var out = { resting: [], walking: [], empty: [] }
   var run = [], state = "resting"
+  var spotX = 0, sum = 0, count = 0
+
+  function flush() {
+    if (count === 0) return
+    run.push([spotX, heartY(sum / count, range, height)])
+    sum = 0
+    count = 0
+  }
   function close() {
-    // A lone point has no line to it; doubled, the round cap draws it as a dot.
+    flush()
+    // A lone spot has no line to it; doubled, the round cap draws it as a dot.
     if (run.length === 1) run.push([run[0][0] + 0.01, run[0][1]])
     if (run.length > 0) out[state].push(run)
     run = []
   }
-  for (var i = 0; i < points.length; i++) {
-    var spot = [heartX(i, points.length, span, width), heartY(points[i][1], range, height)]
+
+  for (var i = first; i < points.length; i++) {
+    var x = heartX(i, offsets, span, width)
     var nowState = heartState(points[i])
-    var broken = i > 0 && points[i][0] - points[i - 1][0] > HEART_BREAK_SECONDS
-    if (i > 0 && (broken || nowState !== state)) {
+    var broken = i > first && points[i][0] - points[i - 1][0] > HEART_BREAK_SECONDS
+    if (i > first && (broken || nowState !== state)) {
+      flush()
       var previous = run[run.length - 1]
       close()
       if (!broken) run.push(previous)
+    } else if (count > 0 && x - spotX >= 0.5) {
+      flush()
     }
     state = nowState
-    run.push(spot)
+    if (count === 0) spotX = x
+    sum += points[i][1]
+    count++
   }
   close()
   return out
 }
 
-// Indexes of the points that start a new run, for the divider lines.
-function heartBreaks(points) {
+// Where the line passes at a point: the mean of the readings drawn into the
+// same spot. A marker placed at the point's own reading would float off the
+// line once the zoom averages many readings into one spot.
+function heartLineY(index, points, offsets, first, span, width, height, range) {
+  var reach = span / width * 0.5        // seconds that make half a pixel, as in heartSegments
+  var sum = 0, count = 0
+  for (var i = index; i >= first && offsets[index] - offsets[i] <= reach; i--) { sum += points[i][1]; count++ }
+  for (var k = index + 1; k < points.length && offsets[k] - offsets[index] <= reach; k++) { sum += points[k][1]; count++ }
+  return heartY(sum / count, range, height)
+}
+
+// Indexes of the shown points that come right after the strap was away.
+function heartBreaks(points, first) {
   var out = []
-  for (var i = 1; i < points.length; i++)
+  for (var i = first + 1; i < points.length; i++)
     if (points[i][0] - points[i - 1][0] > HEART_BREAK_SECONDS) out.push(i)
   return out
 }
 
-function heartIndexAt(x, count, span, width) {
-  if (count === 0) return -1
-  var fromRight = Math.round((width - x) / heartStep(span, width))
-  return clamp(count - 1 - fromRight, 0, count - 1)
+// The shown point nearest to x, -1 with nothing to show.
+function heartIndexAt(x, offsets, first, span, width) {
+  if (offsets.length === 0) return -1
+  var target = heartTotal(offsets) - (width - x) / width * span
+  var hi = heartSearch(offsets, target)
+  if (hi >= offsets.length) hi = offsets.length - 1
+  if (hi > first && target - offsets[hi - 1] < offsets[hi] - target) hi--
+  return Math.max(hi, first)
 }
 
 // Each note with the index of the point it belongs to. A note whose moment is
-// not on the chart (older than the first point) is left out.
-function placeNotes(points, notes) {
+// not among the shown points is left out.
+function placeNotes(points, notes, first) {
   var out = []
   if (!points || !notes || points.length === 0) return out
   for (var n = 0; n < notes.length; n++) {
     var at = notes[n].at
-    var lo = 0, hi = points.length - 1
+    var lo = first, hi = points.length - 1
     while (lo < hi) {
       var mid = (lo + hi) >> 1
       if (points[mid][0] < at) lo = mid + 1
       else hi = mid
     }
-    if (lo > 0 && at - points[lo - 1][0] < points[lo][0] - at) lo--
+    if (lo > first && at - points[lo - 1][0] < points[lo][0] - at) lo--
     if (Math.abs(points[lo][0] - at) > HEART_BREAK_SECONDS) continue
     out.push({ index: lo, at: at, kind: notes[n].kind, text: notes[n].text })
   }

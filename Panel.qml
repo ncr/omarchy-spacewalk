@@ -524,8 +524,8 @@ Panel {
             x: Style.space(16)
             width: parent.width - Style.space(32)
             height: implicitHeight
-            // Bound only while the panel is open: the points change every
-            // five seconds, and a closed panel has nobody to redraw for.
+            // Bound only while the panel is open: a point arrives every
+            // second, and a closed panel has nobody to redraw for.
             points: root.service && root.opened ? root.service.heartPoints : []
             notes: root.service && root.opened ? root.service.heartNotes : []
             foreground: root.fg

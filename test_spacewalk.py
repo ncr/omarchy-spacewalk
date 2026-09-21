@@ -242,14 +242,15 @@ class HeartDayTests(unittest.TestCase):
         old_time = time.time
         time.time = lambda: clock[0]
         self.addCleanup(setattr, time, "time", old_time)
-        for bpm in [100] * 10 + [110] * 10 + [0] * 10 + [120] * 10:
+        # Two packets a second, one point a second: the mean of its packets.
+        for bpm in [100, 104, 110, 110, 0, 0, 0, 0, 120, 121]:
             flags = 0x16 if bpm else 0x14          # rate 0: contact lost
             b.on_heart(None, bytearray([flags, bpm, 0, 0]))
             clock[0] += 0.5
         b.flush_heart_point()
         points = [e["point"] for e in events if e["t"] == "hr_point"]
-        self.assertEqual([p[1] for p in points], [100, 110, 120])
-        self.assertEqual([p[0] for p in points], [1_800_000_005, 1_800_000_010, 1_800_000_020])
+        self.assertEqual([p[1] for p in points], [102, 110, 120])
+        self.assertEqual([p[0] for p in points], [1_800_000_001, 1_800_000_002, 1_800_000_005])
         self.assertEqual(bridge.HeartDay().points, points)
 
     def test_point_tells_a_walker_from_an_empty_running_belt(self):
@@ -262,7 +263,7 @@ class HeartDayTests(unittest.TestCase):
         b.latest = {"speed": 2.5, "incline": 3}
 
         def point():
-            b.heart_slot, b.heart_bucket = int(time.time() // 5), [100]
+            b.heart_slot, b.heart_bucket = int(time.time() // bridge.HEART_POINT_SECONDS), [100]
             b.flush_heart_point()
             return b.heart.points[-1]
 
