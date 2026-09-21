@@ -165,7 +165,15 @@ function formatDay(date) {
 
 // --------------------------------------------------------------- heart chart
 //
-// A point is [unix time, bpm, speed, incline], one per 5 s of strap data.
+// A point is [unix time, bpm, speed, incline, walking], one per 5 s of strap
+// data. Points recorded before the walking flag have four items.
+
+// What the belt and the walker were doing at a point: "resting" (belt
+// stopped), "walking", or "empty" (belt running with nobody on it).
+function heartState(point) {
+  if (!(point[2] > 0)) return "resting"
+  return point.length > 4 && !point[4] ? "empty" : "walking"
+}
 
 // The chart's vertical range: the data's own, opened up to at least 30 bpm and
 // snapped to tens, so the scale does not twitch with every new point.
@@ -198,30 +206,30 @@ function heartY(bpm, range, height) {
   return Math.round((1 - share) * (height - 2)) + 1
 }
 
-// The line as [x, y] runs, in two sets — belt running and belt stopped — so
-// the chart can draw them in different colours. A run ends where the strap was
-// away, and where the belt started or stopped; there the next run begins at
-// the previous point, so the line stays in one piece.
+// The line as [x, y] runs, one set per heartState, so the chart can draw each
+// in its own colour. A run ends where the strap was away and where the state
+// changes; there the next run begins at the previous point, so the line stays
+// in one piece.
 function heartSegments(points, width, height, range) {
-  var out = { walking: [], resting: [] }
-  var run = [], walking = false
+  var out = { resting: [], walking: [], empty: [] }
+  var run = [], state = "resting"
   var step = heartStep(points.length, width)
   function close() {
     // A lone point has no line to it; doubled, the round cap draws it as a dot.
     if (run.length === 1) run.push([run[0][0] + 0.01, run[0][1]])
-    if (run.length > 0) (walking ? out.walking : out.resting).push(run)
+    if (run.length > 0) out[state].push(run)
     run = []
   }
   for (var i = 0; i < points.length; i++) {
     var spot = [i * step, heartY(points[i][1], range, height)]
-    var nowWalking = points[i][2] > 0
+    var nowState = heartState(points[i])
     var broken = i > 0 && points[i][0] - points[i - 1][0] > HEART_BREAK_SECONDS
-    if (i > 0 && (broken || nowWalking !== walking)) {
+    if (i > 0 && (broken || nowState !== state)) {
       var previous = run[run.length - 1]
       close()
       if (!broken) run.push(previous)
     }
-    walking = nowWalking
+    state = nowState
     run.push(spot)
   }
   close()
@@ -242,13 +250,11 @@ function heartIndexAt(x, count, width) {
 }
 
 // Each note with the index of the point it belongs to. A note whose moment is
-// not on the chart (older than the first point) is left out, and so is the
-// belt starting or stopping: the colour of the line says that already.
+// not on the chart (older than the first point) is left out.
 function placeNotes(points, notes) {
   var out = []
   if (!points || !notes || points.length === 0) return out
   for (var n = 0; n < notes.length; n++) {
-    if (notes[n].kind === "belt") continue
     var at = notes[n].at
     var lo = 0, hi = points.length - 1
     while (lo < hi) {
@@ -276,6 +282,7 @@ function formatLoad(speed, incline) {
 // The line above the chart while the cursor is on it.
 function heartCaption(point) {
   return formatClock(point[0]) + " · " + point[1] + " bpm · " + formatLoad(point[2], point[3])
+    + (heartState(point) === "empty" ? ", nobody on it" : "")
 }
 
 // The same line with the cursor elsewhere: the live rate and today's span.

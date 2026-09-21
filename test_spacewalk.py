@@ -252,6 +252,31 @@ class HeartDayTests(unittest.TestCase):
         self.assertEqual([p[0] for p in points], [1_800_000_005, 1_800_000_010, 1_800_000_020])
         self.assertEqual(bridge.HeartDay().points, points)
 
+    def test_point_tells_a_walker_from_an_empty_running_belt(self):
+        b = bridge.Bridge(None, None, 0)
+        bridge.emit = lambda obj, log=True: None
+
+        class Link:
+            is_connected = True
+        b.client = Link()
+        b.latest = {"speed": 2.5, "incline": 3}
+
+        def point():
+            b.heart_slot, b.heart_bucket = int(time.time() // 5), [100]
+            b.flush_heart_point()
+            return b.heart.points[-1]
+
+        b.session_last_move = time.monotonic()            # a step just now
+        self.assertEqual(point()[2:], [2.5, 3, 1])
+        b.session_last_move = time.monotonic() - 30       # the belt runs on, nobody on it
+        self.assertEqual(point()[2:], [2.5, 3, 0])
+        b.latest = {"speed": 0, "incline": 3}
+        self.assertEqual(point()[2:], [0.0, 3, 0])
+        # Points saved before the flag existed still load.
+        with b.heart.path.open("a") as fh:
+            fh.write('{"p":[5,90,2.5,3]}\n')
+        self.assertEqual(bridge.HeartDay().points[-1], [5, 90, 2.5, 3])
+
 
 class FakeScanner:
     running = 0

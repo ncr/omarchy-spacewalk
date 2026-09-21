@@ -48,14 +48,21 @@ Item {
     return Model.heartY(points[index][1], range, height)
   }
 
-  // All markers sit on the line. A speed or incline change made while walking
-  // says what the belt did and is a ring; the rest say what the heart did and
-  // are filled: sudden ones in the urgent colour, slow ones in the text colour.
-  // None takes the accent — that is the colour of the line while the belt runs.
+  // All markers sit on the line. What the belt did is drawn in the text
+  // colour: a small dot where it started or stopped, a ring where speed or
+  // incline changed. What the heart did is a filled dot: sudden changes in the
+  // urgent colour, slow ones in the text colour. Filled dots carry a rim in
+  // the card's colour, which keeps them apart from a line of their own colour.
   function isLoad(note) { return note.kind === "load" }
+  function isBelt(note) { return note.kind === "belt" }
   function noteColor(note) {
     if (isLoad(note)) return background
+    if (isBelt(note)) return Qt.tint(background, Util.alpha(foreground, 0.75))
     return note.kind === "drift" || note.kind === "recovery" ? foreground : urgent
+  }
+  function noteSize(note, active) {
+    if (isBelt(note)) return Style.space(active ? 8 : 5)
+    return Style.space(active ? 9 : 7)
   }
 
   function track(x) {
@@ -121,8 +128,9 @@ Item {
       }
     }
 
-    // Belt stopped: dimmed. Belt running: the accent at full strength. The
-    // difference in strength carries it in themes whose accent is the text colour.
+    // Belt stopped: dimmed. Walking: the accent at full strength — the
+    // difference in strength carries it in themes whose accent is the text
+    // colour. Belt running with nobody on it: the urgent colour.
     Shape {
       anchors.fill: parent
       preferredRendererType: Shape.CurveRenderer
@@ -144,6 +152,15 @@ Item {
         joinStyle: ShapePath.RoundJoin
         PathMultiline { paths: chart.toPaths(chart.segments.walking) }
       }
+
+      ShapePath {
+        strokeColor: chart.urgent
+        strokeWidth: 1.5
+        fillColor: "transparent"
+        capStyle: ShapePath.RoundCap
+        joinStyle: ShapePath.RoundJoin
+        PathMultiline { paths: chart.toPaths(chart.segments.empty) }
+      }
     }
 
     // The point under the cursor.
@@ -161,15 +178,16 @@ Item {
         required property var modelData
         readonly property bool active: chart.activeNote !== null
           && chart.activeNote.at === modelData.at && chart.activeNote.kind === modelData.kind
-        readonly property real size: Style.space(active ? 9 : 6)
+        readonly property real size: chart.noteSize(modelData, active)
         width: size
         height: size
         radius: size / 2
         x: chart.pointX(modelData.index) - size / 2
         y: chart.pointY(modelData.index) - size / 2
         color: chart.noteColor(modelData)
-        border.width: chart.isLoad(modelData) ? 1.5 : 0
-        border.color: chart.foreground
+        // The rim is part of the size: a 7 px marker shows 5 px of colour.
+        border.width: chart.isLoad(modelData) ? 1.5 : 1
+        border.color: chart.isLoad(modelData) ? chart.foreground : chart.background
       }
     }
 

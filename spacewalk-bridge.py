@@ -12,7 +12,7 @@ With a heart rate strap in reach (any Bluetooth strap with the standard Heart
 Rate service), also:
 
     {"t":"heart","state":"connected","bpm":104,"device":"...","battery":100}
-    {"t":"hr_point","point":[1758196800,104,2.5,3]}     one per 5 s
+    {"t":"hr_point","point":[1758196800,104,2.5,3,1]}   one per 5 s
     {"t":"hr_note","at":1758196800,"kind":"jump","text":"..."}
     {"t":"hr_series","reset":true,"notes":[...]}        reply to heart-series,
     {"t":"hr_series","points":[[...],...]}              in chunks
@@ -727,7 +727,8 @@ class HeartNotes:
 
 class HeartDay:
     """Today's heart rate the way the chart draws it: one point per
-    HEART_POINT_SECONDS — [unix time, bpm, speed, incline] — and the notes.
+    HEART_POINT_SECONDS — [unix time, bpm, speed, incline, walking] — and the
+    notes. Points from before the walking flag have four items.
     Every addition goes to the day's file first, so a bridge restart mid-walk
     (there is one after every backend edit) keeps the chart."""
 
@@ -754,7 +755,7 @@ class HeartDay:
             if not isinstance(raw, dict):
                 continue
             point, note = raw.get("p"), raw.get("n")
-            if (isinstance(point, list) and len(point) == 4
+            if (isinstance(point, list) and len(point) in (4, 5)
                     and all(isinstance(v, (int, float)) for v in point)):
                 self.points.append(point)
             elif isinstance(note, dict) and isinstance(note.get("at"), (int, float)):
@@ -1074,6 +1075,17 @@ class Bridge:
             return 0.0, 0.0
         return float(self.latest.get("speed", 0)), float(self.latest.get("incline", 0))
 
+    # The treadmill reports a step about once a second while someone walks.
+    STEP_SILENCE = 4.0
+
+    def walker_on_belt(self) -> bool:
+        """A running belt and a walker are two things: the belt runs on for a
+        while after you step off, and it can be started with nobody on it.
+        Steps are what tells them apart — the treadmill counts them from the
+        person, not from the belt."""
+        speed, _ = self.current_load()
+        return speed > 0 and time.monotonic() - self.session_last_move < self.STEP_SILENCE
+
     def publish_heart(self, state: str, bpm: int | None = None, **extra):
         """The strap's state and the live rate, for the panel. A change of
         state goes out at once and into the log; the rate alone at most once a
@@ -1119,7 +1131,7 @@ class Bridge:
         speed, incline = self.current_load()
         at = (self.heart_slot + 1) * HEART_POINT_SECONDS
         point = [at, round(sum(self.heart_bucket) / len(self.heart_bucket)),
-                 round(speed, 1), round(incline)]
+                 round(speed, 1), round(incline), int(self.walker_on_belt())]
         self.heart_bucket = []
         if self.heart.add("p", point, at):
             self.send_heart_series()   # past midnight: the panel starts an empty chart

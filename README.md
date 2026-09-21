@@ -69,10 +69,12 @@ chart — hover a marker to read it:
 - **drift** — 10 bpm or more above minutes 5–10 of a steady stretch, after
   20 min at the same speed and incline
 - **recovery** — how far the rate fell in the minute after the belt stopped
-- a ring on the line — speed or incline changed during the walk
+- a small dot — the belt started or stopped; a ring — speed or incline
+  changed during the walk
 
-The line takes the accent colour while the belt runs and is dimmed while it
-stands, so the walks show at a glance.
+The line is dimmed while the belt stands, takes the accent colour while you
+walk, and the urgent colour while the belt runs with nobody on it (no steps
+for a few seconds), so the walks show at a glance.
 
 The thresholds are first guesses (`HeartNotes` in `spacewalk-bridge.py`). This
 is a training aid, not a medical device: the strap sends an averaged rate, so
