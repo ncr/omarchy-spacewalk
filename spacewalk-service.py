@@ -118,6 +118,7 @@ class Host:
         self.process = None
         self.args = None
         self.clients = set()
+        self.connections = set()
         self.cache = {}
         self.lock = asyncio.Lock()
         self.stopping = False
@@ -150,6 +151,8 @@ class Host:
     async def configure(self, args):
         args = validate_args(args)
         async with self.lock:
+            if self.stopping:
+                return
             if self.args == args:
                 return
             # Settings changes are serialized; ordinary UI reloads do nothing.
@@ -178,6 +181,7 @@ class Host:
             await asyncio.sleep(5)
 
     async def serve_client(self, reader, writer):
+        self.connections.add(writer)
         queue = asyncio.Queue(maxsize=256)
         sender = None
         async def send_events():
@@ -199,6 +203,7 @@ class Host:
         except (ValueError, KeyError, ConnectionError, asyncio.TimeoutError):
             pass
         finally:
+            self.connections.discard(writer)
             self.clients.discard(queue)
             if sender:
                 sender.cancel()
@@ -226,6 +231,12 @@ class Host:
                     await self.configure(saved)
                 async with server:
                     await stop.wait()
+                    self.stopping = True
+                    # Server.__aexit__ waits for all accepted connections too.
+                    # Close UI sockets first; clients otherwise wait for us forever.
+                    server.close()
+                    for writer in tuple(self.connections):
+                        writer.close()
             finally:
                 self.stopping = True
                 watcher.cancel()

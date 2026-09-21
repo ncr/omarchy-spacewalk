@@ -4,6 +4,8 @@ import importlib.util
 import io
 import json
 import os
+import signal
+import sys
 from pathlib import Path
 import tempfile
 import time
@@ -371,6 +373,65 @@ for line in sys.stdin:
             w.close()
             await w.wait_closed()
         self.assertIsNone(self.host.process.returncode)
+
+    async def test_host_restart_with_connected_and_idle_widgets(self):
+        # Exercise Host.run's real SIGTERM/server lifecycle, not just stop_bridge.
+        runtime = service.STATE / "runtime"
+        sock = runtime / "bridge.sock"
+        runner = service.STATE / "host-runner.py"
+        runner.write_text("\n".join([
+            "import asyncio, importlib.util",
+            "from pathlib import Path",
+            f"spec = importlib.util.spec_from_file_location('host', {str(Path(service.__file__))!r})",
+            "host = importlib.util.module_from_spec(spec)",
+            "spec.loader.exec_module(host)",
+            f"host.RUNTIME = Path({str(runtime)!r})",
+            f"host.SOCKET = Path({str(sock)!r})",
+            f"host.STATE = Path({str(service.STATE)!r})",
+            f"host.BRIDGE = Path({str(service.BRIDGE)!r})",
+            "asyncio.run(host.Host().run())",
+        ]))
+        for cycle in range(2):
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, str(runner), start_new_session=True,
+                stderr=asyncio.subprocess.PIPE)
+            writers = []
+            try:
+                async with asyncio.timeout(3):
+                    while True:
+                        try:
+                            reader, writer = await asyncio.open_unix_connection(str(sock))
+                            break
+                        except (FileNotFoundError, ConnectionRefusedError):
+                            await asyncio.sleep(.01)
+                    writers.append(writer)
+                    writer.write(b'{"args":[]}\n')
+                    await writer.drain()
+                    while True:
+                        event = json.loads(await reader.readline())
+                        if event["t"] == "data":
+                            break
+                    self.assertEqual(event["day_steps"], 10042)
+                    idle_reader, idle_writer = await asyncio.open_unix_connection(str(sock))
+                    writers.append(idle_writer)
+                    # Allow the idle client to be accepted, but send no handshake.
+                    await asyncio.sleep(.03)
+                started = time.monotonic()
+                proc.terminate()
+                await asyncio.wait_for(proc.wait(), 2)
+                self.assertEqual(proc.returncode, 0, (await proc.stderr.read()).decode())
+                self.assertLess(time.monotonic() - started, 2)
+                self.assertEqual(await asyncio.wait_for(reader.read(), 1), b"")
+                self.assertEqual(await asyncio.wait_for(idle_reader.read(), 1), b"")
+                self.assertFalse(sock.exists())
+            finally:
+                for writer in writers:
+                    writer.close()
+                    await writer.wait_closed()
+                # Includes the fake child if a regression strands it behind Host.run.
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                await proc.wait()
 
     async def test_backend_crash_restarts_without_panel(self):
         r, w, event = await self.connect()

@@ -95,7 +95,10 @@ socket carries events and commands; one locked bridge owns the connection.
 Each incoming counter update is written atomically and synced before the UI
 receives the new total, including a treadmill counter resetting to zero.
 
-The bridge rescans and reconnects by itself. Inspect it with:
+The bridge rescans and reconnects by itself. If it gets stuck after sleep or
+a Bluetooth adapter reconnect, open the Spacewalk panel and press **R** to
+restart its connection service. This preserves saved steps and does not start
+or stop the belt. Inspect it with:
 
 ```bash
 systemctl --user status omarchy-spacewalk.service
