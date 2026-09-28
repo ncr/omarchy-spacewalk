@@ -4,8 +4,8 @@ import qs.Ui
 import "shared" as Shared
 import "Model.js" as Model
 
-// Pill on the bar: a thin progress bar toward the goal, and under it the walker
-// and the day's steps. Click opens the panel; middle click starts or stops the belt.
+// Walker and today's steps on the bar.
+// Click opens the panel; middle click starts or stops the belt.
 BarWidget {
   id: root
   moduleName: "io.github.ncr.spacewalk"
@@ -13,10 +13,8 @@ BarWidget {
   readonly property var service: Shared.ServiceRegistry.service
   readonly property int goal: service ? service.dailyGoal : 10000
   readonly property int steps: service ? service.daySteps : 0
-  readonly property real progress: Model.progress(steps, goal)
   // Right click flips the number between steps done and steps left to the goal.
-  // The progress bar still fills toward the goal, so a falling number beside a
-  // rising bar reads as a countdown without a label. Resets on a shell restart.
+  // Resets on a shell restart.
   property bool showRemaining: false
   readonly property int stepsRemaining: Math.max(0, goal - steps)
   // One fixed walker. A second glyph for while walking was dropped: this font
@@ -86,8 +84,7 @@ BarWidget {
     implicitHeight: root.bar ? root.bar.barSize : Style.space(24)
 
     readonly property real glyphSlot: (icon.implicitWidth + Style.space(6)) / 2
-    // Walker plus number, no margins — that is how wide the progress bar is,
-    // and the open-panel line the same.
+    // Walker plus number, no margins — the width of the open-panel line.
     readonly property real contentWidth: icon.implicitWidth + Style.space(6) + number.implicitWidth
 
     Text {
@@ -118,32 +115,6 @@ BarWidget {
       font.pixelSize: Style.font.body
       renderType: Text.NativeRendering
       opacity: number.opacity
-    }
-
-    // Progress toward the goal, above the walker and the number, as wide as both.
-    // The track takes its color from the same place as slider tracks in Omarchy
-    // panels, so it follows the theme instead of being hard-coded black.
-    Rectangle {
-      anchors.horizontalCenter: parent.horizontalCenter
-      anchors.top: parent.top
-      anchors.topMargin: Style.space(2)
-      width: Math.round(button.contentWidth)
-      // Once the goal is reached the bar disappears: a full line all evening
-      // says nothing anymore, and the number alone says everything.
-      visible: root.progress < 1
-      height: Style.space(2)
-      radius: height / 2
-      color: root.bar ? Style.selectedFillFor(root.bar.barForeground, Color.accent)
-                      : Style.selectedFill
-
-      Rectangle {
-        anchors.left: parent.left
-        width: Math.round(parent.width * root.progress)
-        height: parent.height
-        radius: parent.radius
-        color: root.progress >= 1 ? (root.bar ? root.bar.urgent : Color.urgent)
-                                  : (root.bar ? root.bar.barForeground : Color.foreground)
-      }
     }
 
     MouseArea {

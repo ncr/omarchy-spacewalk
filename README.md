@@ -2,8 +2,8 @@
 
 This drives my treadmill — a **Urevo SpaceWalk 3S** under my desk — from the
 [Omarchy](https://omarchy.org) bar, in place of the vendor's phone app.
-Written for my own setup, in the malleable computing spirit. Steps and goal
-progress in the bar; calories, time, distance, a history grid and
+Written for my own setup, in the malleable computing spirit. Steps taken or remaining toward the goal
+in the bar; calories, time, distance, a history grid and
 speed / incline / belt control in the panel.
 
 <picture>

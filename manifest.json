@@ -16,7 +16,7 @@
   },
   "barWidget": {
     "displayName": "Spacewalk",
-    "description": "Today's steps with a progress bar toward the goal",
+    "description": "Today's steps or steps remaining toward the goal",
     "category": "Health",
     "allowMultiple": false,
     "defaultSection": "right",
