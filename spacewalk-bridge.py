@@ -26,6 +26,8 @@ Reads one command per line from stdin:
 import argparse
 import asyncio
 import collections
+from concurrent.futures import ThreadPoolExecutor
+import contextlib
 import fcntl
 import json
 import os
@@ -34,6 +36,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -99,6 +102,39 @@ LOG_MAX_BYTES = 5 * 1024 * 1024
 log_bytes = None
 
 
+# Every file write runs here, one at a time and in queue order, never on the
+# event loop. An fsync on btrfs waits for the filesystem's whole log commit:
+# with a browser test suite writing 200 MB/s on 2026-10-08 one took up to
+# 1.2 s, and the bridge, saving the day file on every treadmill reading, sat
+# blocked more than half the time. Readings arrived in bursts after gaps of
+# up to 26 s, a resume sent the speed 45 s late and the belt crawled at
+# 1 km/h meanwhile, the Start switch waited for its command to be read, and
+# a 20 s strap scan ran for 3-4 minutes.
+DISK = ThreadPoolExecutor(max_workers=1, thread_name_prefix="disk")
+
+
+def disk_idle():
+    """Blocks until every write queued so far has landed. For tests."""
+    DISK.submit(lambda: None).result()
+
+
+def in_background(fn, *args, what: str):
+    """Queues fn on the disk thread. A failure comes back as an error event
+    on the event loop, where emit() runs; without a loop (tests) it is lost."""
+    future = DISK.submit(fn, *args)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return future
+
+    def report(done):
+        exc = done.exception()
+        if exc is not None:
+            loop.call_soon_threadsafe(error, f"cannot save {what}: {exc}")
+    future.add_done_callback(report)
+    return future
+
+
 def append_log(text: str):
     global log_bytes
     data = text.encode("utf-8")
@@ -133,9 +169,13 @@ def emit(obj, log=True):
         return  # the live heart rate and series replies would only bloat the log
     # Copy to a file: the shell consumes the bridge's stdout, so without this
     # there is no way to see what the treadmill says while the plugin runs.
+    DISK.submit(log_quietly, f"{datetime.now().isoformat(timespec='seconds')} {line}\n")
+
+
+def log_quietly(text: str):
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        append_log(f"{datetime.now().isoformat(timespec='seconds')} {line}\n")
+        append_log(text)
     except OSError:
         pass
 
@@ -223,6 +263,47 @@ def append_state(path: Path, text: str, sync: bool = True):
             os.fsync(fd)
     finally:
         os.close(fd)
+
+
+class LatestWrites:
+    """Whole-file rewrites of state (the day's totals, the open walk, the
+    targets) on the disk thread. A newer text for a file replaces one still
+    waiting in the queue, so a slow disk leaves the file one write behind at
+    most instead of working off a backlog of stale copies. A text of None
+    removes the file, through the same queue, so a write still waiting cannot
+    bring back a file removed after it."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.texts: dict[Path, str | None] = {}
+        self.job = None
+
+    def put(self, path: Path, text: str | None):
+        """Returns the future of the write that will carry this text."""
+        with self.lock:
+            self.texts[path] = text
+            if self.job is None:
+                self.job = in_background(self.flush, what="state")
+            return self.job
+
+    def flush(self):
+        with self.lock:
+            texts, self.texts, self.job = self.texts, {}, None
+        failure = None
+        for path, text in texts.items():
+            try:
+                if text is None:
+                    with contextlib.suppress(FileNotFoundError):
+                        path.unlink()
+                else:
+                    write_state(path, text)
+            except OSError as exc:
+                failure = failure or OSError(f"{path}: {exc}")
+        if failure:
+            raise failure
+
+
+LATEST = LatestWrites()
 
 
 # A bridge killed between mkstemp and os.replace in write_state() leaves its
@@ -373,6 +454,7 @@ class DayTotals:
         self.totals = {f: 0.0 for f in self.FIELDS}
         self.session = {f: None for f in self.FIELDS}
         self.dirty = False
+        self.job = None     # the queued write that carries the latest totals
         self.load()
 
     @property
@@ -401,31 +483,39 @@ class DayTotals:
             error(f"cannot load {self.path}: {exc}")
 
     def save(self):
-        if not self.dirty:
-            return True
-        try:
-            STATE_DIR.mkdir(parents=True, exist_ok=True)
+        """Hands the totals to the disk thread. Returns the future of the
+        write that carries them, or None once they are on disk. Totals whose
+        write failed are handed over again."""
+        if self.job is not None and self.job.done():
+            if self.job.exception() is not None:
+                self.dirty = True
+            self.job = None
+        if self.dirty:
             payload = {f: round(self.totals[f], 2) for f in self.FIELDS}
             payload["session_ref"] = {f: self.session[f] for f in self.FIELDS
                                       if self.session[f] is not None}
             payload["updated"] = datetime.now().isoformat(timespec="seconds")
-            write_state(self.path, json.dumps(payload, indent=2))
+            self.job = LATEST.put(self.path, json.dumps(payload, indent=2))
             self.dirty = False
-            return True
-        except OSError as exc:
-            error(f"cannot save {self.path}: {exc}")
-            return False
+        return self.job
 
     def roll_over_if_needed(self):
         today = date.today()
         if today == self.day:
             return
         self.save()
+        finished = (self.day.isoformat(), self.snapshot())
         self.day = today
         self.totals = {f: 0.0 for f in self.FIELDS}
         self.session = {f: None for f in self.FIELDS}
+        self.job = None
         self.load()
-        emit({"t": "history", "days": read_history()})
+        days = read_history()
+        # The finished day's file may still wait in the disk queue.
+        key, snap = finished
+        days[key] = {"steps": snap["day_steps"], "distance_m": snap["day_distance_m"],
+                     "kcal": snap["day_kcal"], "elapsed_s": snap["day_elapsed_s"]}
+        emit({"t": "history", "days": days})
 
     def update(self, sample: dict):
         """Takes values cumulative since the session start and adds the delta.
@@ -778,13 +868,11 @@ class HeartDay:
                      else (self.notes, HEART_NOTES_MAX))
         kept.append(value)
         del kept[:-cap]
-        try:
-            # A point a second is not worth a disk flush each: losing the last
-            # few to a power cut costs nothing. Notes are rare and are flushed.
-            append_state(self.path, json.dumps({key: value}, separators=(",", ":")) + "\n",
-                         sync=key != "p")
-        except OSError as exc:
-            error(f"cannot save {self.path}: {exc}")
+        # A point a second is not worth a disk flush each: losing the last
+        # few to a power cut costs nothing. Notes are rare and are flushed.
+        in_background(append_state, self.path,
+                      json.dumps({key: value}, separators=(",", ":")) + "\n", key != "p",
+                      what=self.path.name)
         return rolled
 
     def messages(self):
@@ -1043,6 +1131,7 @@ class Bridge:
         self.heart_slot: int | None = None
         self.heart_bucket: list[int] = []
         self.day = DayTotals()
+        self.unpublished: dict | None = None   # a reading waiting for its day write
         self.latest: dict = {}
         self.control_replies: asyncio.Queue = asyncio.Queue()
         self.has_control = False
@@ -1266,10 +1355,7 @@ class Bridge:
         started = self.session_started_at
         self.session_started_at = None
         self.session_peak = {}
-        try:
-            OPEN_SESSION_PATH.unlink()
-        except OSError:
-            pass
+        LATEST.put(OPEN_SESSION_PATH, None)
         if peak.get("steps", 0) <= 0:
             return  # the belt spun with nobody on it — nothing worth recording
         record = {
@@ -1303,10 +1389,7 @@ class Bridge:
             "last_move": (self.session_last_move_wall or datetime.now()).isoformat(timespec="seconds"),
             "peak": self.session_peak,
         }
-        try:
-            write_state(OPEN_SESSION_PATH, json.dumps(payload))
-        except OSError as exc:
-            error(f"cannot save the open session: {exc}")
+        LATEST.put(OPEN_SESSION_PATH, json.dumps(payload))
 
     def recover_open_session(self):
         """A leftover open-session file means the previous bridge died
@@ -1352,11 +1435,8 @@ class Bridge:
                   "defaults": self.target_defaults}
         if record == self.targets_saved:
             return
-        try:
-            write_state(TARGETS_PATH, json.dumps(record))
-            self.targets_saved = record
-        except OSError as exc:
-            error(f"cannot save the targets: {exc}")
+        LATEST.put(TARGETS_PATH, json.dumps(record))
+        self.targets_saved = record
 
     def adopt_targets(self, sample: dict):
         """The treadmill's own console changes speed and incline behind our
@@ -1414,17 +1494,35 @@ class Bridge:
         self.latest = sample
         self.adopt_targets(sample)
         self.track_session(applied)
-        # Commit before publishing: a displayed gain survives a hard kill.
-        saved = self.day.save()
+        job = self.day.save()
         if applied:
             self.persist_open_session()
-        if not saved:
-            return  # Never advertise a total which failed to reach disk.
         payload = {"t": "data"}
         payload.update({k: round(v, 2) if isinstance(v, float) else v
                         for k, v in sample.items() if v is not None})
         payload.update(self.day.snapshot())
-        emit(payload)
+        self.publish_saved(job, payload)
+
+    def publish_saved(self, job, payload: dict):
+        """Totals go out only once the day file holds them, so a displayed
+        gain survives a hard kill — the event loop does not wait for the write
+        meanwhile. Of the readings that wait for one write only the newest goes
+        out; one whose write failed never does."""
+        self.unpublished = payload
+        if job is None:
+            self.unpublished = None
+            emit(payload)
+            return
+        loop = asyncio.get_running_loop()
+        job.add_done_callback(
+            lambda done: loop.call_soon_threadsafe(self.on_day_saved, done, payload))
+
+    def on_day_saved(self, job, payload: dict):
+        if self.unpublished is not payload:
+            return  # a newer reading waits for a later write
+        self.unpublished = None
+        if job.exception() is None:
+            emit(payload)
 
     def on_control_reply(self, _sender, data: bytearray):
         raw = bytes(data)
@@ -1590,8 +1688,7 @@ class Bridge:
         if cmd == "reset-day":
             self.day.totals = {f: 0.0 for f in DayTotals.FIELDS}
             self.day.dirty = True
-            self.day.save()
-            emit({"t": "data", **self.day.snapshot()})
+            self.publish_saved(self.day.save(), {"t": "data", **self.day.snapshot()})
             return
 
         if cmd == "start":
@@ -1824,6 +1921,7 @@ class Bridge:
         await asyncio.wait(tasks, timeout=5.0)
         self.close_session()
         self.day.save()
+        await asyncio.wrap_future(DISK.submit(lambda: None))
 
 
 async def main():

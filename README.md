@@ -104,7 +104,13 @@ The Bluetooth bridge runs under `omarchy-spacewalk.service`, independently of
 the bar. Reloading any plugin only replaces the UI client. A private Unix
 socket carries events and commands; one locked bridge owns the connection.
 Each incoming counter update is written atomically and synced before the UI
-receives the new total, including a treadmill counter resetting to zero.
+receives the new total, including a treadmill counter resetting to zero. The
+writes run on a thread of their own: under heavy disk load one fsync can take
+over a second, and the Bluetooth side must not wait for it.
+
+While a start or resume is under way, the panel header shows its step and
+seconds (`1.0 → 2.5 km/h · 12 s`); after 4 s without a reading it says
+`no data from the treadmill for N s` instead.
 
 The bridge rescans and reconnects by itself. If it gets stuck after sleep or
 a Bluetooth adapter reconnect, open the Spacewalk panel and press **R** to

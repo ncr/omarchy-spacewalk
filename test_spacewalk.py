@@ -25,6 +25,12 @@ service = module("service", "spacewalk-service.py")
 real_emit = bridge.emit
 
 
+async def settle():
+    """Lets every queued disk write land and its follow-up run on the loop."""
+    await asyncio.wrap_future(bridge.DISK.submit(lambda: None))
+    await asyncio.sleep(0)
+
+
 class CounterTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -40,10 +46,12 @@ class CounterTests(unittest.TestCase):
         day.update({"steps": 0})
         day.update({"steps": 481})
         day.save()
+        bridge.disk_idle()
         for value in [525, 525, 525, 526]:
             day = bridge.DayTotals()
             day.update({"steps": value})
             day.save()
+            bridge.disk_idle()
             self.assertEqual(day.totals["steps"], value)
 
     def test_reset_zero_is_persisted_without_new_steps(self):
@@ -53,6 +61,7 @@ class CounterTests(unittest.TestCase):
         day.save()
         day.update({"steps": 0})
         day.save()
+        bridge.disk_idle()
         day = bridge.DayTotals()
         self.assertEqual(day.session["steps"], 0)
         day.update({"steps": 600})
@@ -73,9 +82,45 @@ class CounterTests(unittest.TestCase):
                 self.assertEqual(saved["session_ref"]["steps"], event["steps"])
                 observed.append(event["day_steps"])
         bridge.emit = check
-        for _ in range(5):
-            b.on_treadmill_data(None, b"dummy")
+        async def feed():
+            for _ in range(5):
+                b.on_treadmill_data(None, b"dummy")
+                await settle()
+        asyncio.run(feed())
         self.assertEqual(observed, [0, 481, 525, 525, 526])
+
+    def test_readings_do_not_wait_for_a_slow_disk(self):
+        b = bridge.Bridge(None, None, 0)
+        b.adopt_targets = lambda sample: None
+        values = iter(range(0, 1000, 10))
+        old_parse, old_write = bridge.parse_treadmill_data, bridge.write_state
+        bridge.parse_treadmill_data = lambda data: {"steps": next(values)}
+        self.addCleanup(setattr, bridge, "parse_treadmill_data", old_parse)
+        self.addCleanup(setattr, bridge, "write_state", old_write)
+        writes = []
+        def slow_write(path, text):
+            time.sleep(0.3)             # an fsync under a disk-heavy test suite
+            writes.append(path)
+            old_write(path, text)
+        bridge.write_state = slow_write
+        events = []
+        bridge.emit = lambda obj, log=True: events.append(obj)
+        async def feed():
+            started = time.monotonic()
+            for _ in range(10):
+                b.on_treadmill_data(None, b"dummy")
+            handed_over = time.monotonic() - started
+            await settle()
+            return handed_over
+        handed_over = asyncio.run(feed())
+        self.assertLess(handed_over, 0.1)
+        # Ten readings during one slow write: the queue keeps the newest text
+        # only, and only the newest reading goes out.
+        self.assertLessEqual(writes.count(b.day.path), 2)
+        data = [e for e in events if e.get("t") == "data"]
+        self.assertEqual(data[-1]["day_steps"], 90)
+        self.assertEqual(json.loads(b.day.path.read_text())["steps"], 90)
+        self.assertLessEqual(len(data), 2)
 
     def test_empty_belt_does_not_add_distance(self):
         day = bridge.DayTotals()
@@ -97,12 +142,16 @@ class CounterTests(unittest.TestCase):
         self.addCleanup(setattr, bridge, "write_state", old_write)
         events = []
         bridge.emit = events.append
-        b.on_treadmill_data(None, b"dummy")
-        self.assertFalse(any(e.get("t") == "data" for e in events))
-        self.assertTrue(b.day.dirty)
-        bridge.write_state = old_write
-        b.on_treadmill_data(None, b"dummy")
-        self.assertEqual(events[-1]["day_steps"], 44)
+        async def feed():
+            b.on_treadmill_data(None, b"dummy")
+            await settle()
+            self.assertFalse(any(e.get("t") == "data" for e in events))
+            self.assertFalse(b.day.path.exists())
+            bridge.write_state = old_write
+            b.on_treadmill_data(None, b"dummy")
+            await settle()
+        asyncio.run(feed())
+        self.assertEqual([e for e in events if e.get("t") == "data"][-1]["day_steps"], 44)
         self.assertEqual(json.loads(b.day.path.read_text())["steps"], 44)
 
 
@@ -221,6 +270,7 @@ class HeartDayTests(unittest.TestCase):
         for i in range(1200):
             day.add("p", [now + i * 5, 100 + i % 7, 2.5, 3], now)
         day.add("n", {"at": now + 50, "kind": "jump", "text": "x", "bpm": 120}, now)
+        bridge.disk_idle()
         with day.path.open("a") as fh:
             fh.write("not json\n{\"p\":[1,2]}\n")
         again = bridge.HeartDay()
@@ -251,6 +301,7 @@ class HeartDayTests(unittest.TestCase):
         points = [e["point"] for e in events if e["t"] == "hr_point"]
         self.assertEqual([p[1] for p in points], [102, 110, 120])
         self.assertEqual([p[0] for p in points], [1_800_000_001, 1_800_000_002, 1_800_000_005])
+        bridge.disk_idle()
         self.assertEqual(bridge.HeartDay().points, points)
 
     def test_point_tells_a_walker_from_an_empty_running_belt(self):
@@ -274,6 +325,7 @@ class HeartDayTests(unittest.TestCase):
         b.latest = {"speed": 0, "incline": 3}
         self.assertEqual(point()[2:], [0.0, 3, 0])
         # Points saved before the flag existed still load.
+        bridge.disk_idle()
         with b.heart.path.open("a") as fh:
             fh.write('{"p":[5,90,2.5,3]}\n')
         self.assertEqual(bridge.HeartDay().points[-1], [5, 90, 2.5, 3])
@@ -588,6 +640,7 @@ class LogCapTests(StateDirTestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             for n in range(10):
                 real_emit({"t": "data", "steps": n})
+        bridge.disk_idle()
         self.assertLessEqual(self.log.stat().st_size, 100)
         self.assertLessEqual(self.old.stat().st_size, 100)
         self.assertIn('"steps":9', self.log.read_text())

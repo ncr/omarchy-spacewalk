@@ -59,6 +59,23 @@ Item {
   // accepts targets only once up to speed, so without this Start looks dead.
   property string phaseName: ""
   property string phaseText: ""
+  // When the last start, pause or stop went out, and when the last reading
+  // came in (Date.now() ms; 0 = never). The panel counts the start's seconds
+  // from the one and notices a silent treadmill from the other: it sends a
+  // reading a second, standing or not.
+  property real commandAt: 0
+  property real lastDataAt: 0
+  // The start's steps, and since when one of them has been under way: a
+  // resume the bridge kicks off itself, when you step back on the belt, has
+  // no command from the panel to count from.
+  readonly property var busyPhases: ["sending", "control", "starting", "unconfirmed", "spinup", "setting"]
+  property real busySince: 0
+  property bool wasBusy: false
+  onPhaseNameChanged: {
+    var busy = busyPhases.indexOf(phaseName) !== -1
+    if (busy && !wasBusy) busySince = Date.now()
+    wasBusy = busy
+  }
   // running | paused | stopped. Paused means you stepped off the belt and can
   // resume; stopped, that the treadmill halted on command or via the switch.
   property string beltState: "stopped"
@@ -146,6 +163,7 @@ Item {
   function beginCommand(wantWalking) {
     intendedWalking = wantWalking
     commandPending = true
+    commandAt = Date.now()
     pendingWatchdog.restart()
   }
 
@@ -273,6 +291,7 @@ Item {
   }
 
   function applyData(msg) {
+    lastDataAt = Date.now()
     if (msg.speed !== undefined) {
       speed = msg.speed
       walking = msg.speed > 0.1

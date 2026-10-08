@@ -48,6 +48,17 @@ Panel {
   }
 
   property var clockNow: new Date()
+
+  // A second-by-second clock for the start's progress and for noticing a
+  // silent treadmill; it ticks only while there is a link to watch.
+  property real nowMs: Date.now()
+  Timer {
+    running: root.opened && root.service !== null && root.service.connected
+    interval: 1000
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: root.nowMs = Date.now()
+  }
   Timer {
     running: root.opened
     interval: 10000
@@ -82,9 +93,51 @@ Panel {
       // The strap takes ten seconds or so to connect, and the chart stands
       // still meanwhile. Looking for a strap is not shown here: without one it
       // would come up every minute for good.
-      case "connected": return service.heartState === "connecting" ? "connecting to the strap..." : ""
+      case "connected":
+        if (silentLabel !== "") return silentLabel
+        if (startLabel !== "") return startLabel
+        return service.heartState === "connecting" ? "connecting to the strap..." : ""
       default: return service.linkState
     }
+  }
+
+  // The treadmill sends a reading a second, standing or running. Seconds of
+  // silence mean the link (or the bridge) is stuck, and whatever the panel
+  // shows is that old — on 2026-10-08 gaps of up to 26 s went unnoticed.
+  readonly property string silentLabel: {
+    if (!service || !service.connected || service.lastDataAt <= 0) return ""
+    var seconds = Math.floor((nowMs - service.lastDataAt) / 1000)
+    return seconds >= 4 ? "no data from the treadmill for " + seconds + " s" : ""
+  }
+
+  // The start, step by step, short enough for the header: which step is
+  // under way, where the belt is against the target, and how many seconds the
+  // command has taken so far. A resume that crawls at 1 km/h shows it.
+  readonly property string startLabel: {
+    if (!service) return ""
+    var name = service.phaseName
+    if (name === "failed") return "the belt did not start"
+    if (name === "error") return service.phaseText.replace(/^the /, "")
+    if (name === "partial")
+      return "stuck at " + Number(service.speed).toFixed(1) + " of " + Number(service.targetSpeed).toFixed(1) + " km/h"
+    if (!beltBusy) return ""
+    var text
+    switch (name) {
+      case "sending": text = "sending start"; break
+      case "control": text = "taking control"; break
+      case "starting": text = "start sent, waiting"; break
+      case "unconfirmed": text = "no reply, watching the belt"; break
+      case "spinup":
+      case "setting":
+        text = service.phaseText.indexOf("incline") !== -1
+          ? "incline " + Math.round(service.incline) + " → " + Math.round(service.targetIncline)
+          : Number(service.speed).toFixed(1) + " → " + Number(service.targetSpeed).toFixed(1) + " km/h"
+        break
+      default: text = service.phaseText
+    }
+    var since = service.busyPhases.indexOf(name) !== -1 ? service.busySince : service.commandAt
+    var seconds = Math.floor((nowMs - since) / 1000)
+    return since > 0 && seconds >= 1 ? text + " · " + seconds + " s" : text
   }
 
   // Header subtitle: trouble is described matter-of-factly, and when all is
@@ -236,7 +289,7 @@ Panel {
 
   readonly property bool beltBusy: service
     && (service.commandPending
-        || ["sending", "control", "starting", "unconfirmed", "spinup", "setting"].indexOf(service.phaseName) !== -1)
+        || service.busyPhases.indexOf(service.phaseName) !== -1)
 
   function open() {
     openedFromHotkey = false
