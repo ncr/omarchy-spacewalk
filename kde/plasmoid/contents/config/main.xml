@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0 http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+  <kcfgfile name=""/>
+  <!-- The same settings as the Omarchy widget (manifest.json), and the goal
+       kinds only this widget has. The goals and showRemaining stay here; the
+       rest go to the bridge through Configure. -->
+  <group name="General">
+    <entry name="address" type="String">
+      <label>Treadmill address; empty scans for any FTMS treadmill</label>
+      <default></default>
+    </entry>
+    <entry name="goalKind" type="String">
+      <label>What the daily goal counts: steps, distance or calories</label>
+      <default>steps</default>
+    </entry>
+    <entry name="dailyGoal" type="Int">
+      <label>Daily goal in steps</label>
+      <default>10000</default>
+      <min>1</min>
+    </entry>
+    <entry name="distanceGoal" type="Double">
+      <label>Daily goal in km</label>
+      <default>5</default>
+    </entry>
+    <entry name="calorieGoal" type="Int">
+      <label>Daily goal in kcal</label>
+      <default>400</default>
+      <min>1</min>
+    </entry>
+    <entry name="startSpeed" type="Double">
+      <label>Speed on start, km/h</label>
+      <default>2.5</default>
+    </entry>
+    <entry name="startIncline" type="Int">
+      <label>Incline on start, %</label>
+      <default>3</default>
+    </entry>
+    <entry name="strideMeters" type="Double">
+      <label>Stride length in metres; 0 takes steps from the treadmill</label>
+      <default>0</default>
+    </entry>
+    <entry name="phonePort" type="Int">
+      <label>Apple Health sync port; 0 is off</label>
+      <default>0</default>
+    </entry>
+    <entry name="heartAddress" type="String">
+      <label>Heart rate strap address; empty takes any strap, "off" none</label>
+      <default></default>
+    </entry>
+    <entry name="heartLimit" type="Int">
+      <label>Note a heart rate above this, bpm; 0 is off</label>
+      <default>150</default>
+    </entry>
+    <entry name="showRemaining" type="Bool">
+      <label>The panel shows what is left to the goal instead of what is done</label>
+      <default>false</default>
+    </entry>
+  </group>
+</kcfg>

@@ -939,6 +939,9 @@ for line in sys.stdin:
             day_distance_m=7040, day_kcal=303, day_elapsed_s=5060, pid=os.getpid())
     elif command[0] == "beat":         # test only: a heart rate point at a given time
         say(t="hr_point", point=[int(command[1]), 125, 2.5, 3, 1])
+    elif command[0] == "rest":         # test only: the belt stands again
+        say(t="data", speed=0.0, incline=3.0, elapsed_s=60, day="2026-10-08", day_steps=10100,
+            day_distance_m=7040, day_kcal=303, day_elapsed_s=5060, pid=os.getpid())
 '''
 
 BUS_CONFIG = '''<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"

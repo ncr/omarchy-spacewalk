@@ -1,0 +1,22 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Jacek Becela"
+            },
+            {
+                "Name": "Sławek Piotrowski"
+            }
+        ],
+        "Category": "Utilities",
+        "Description": "Steps, calories, time and distance from a Urevo SpaceWalk 3S, with speed and incline control",
+        "Icon": "speedometer",
+        "Id": "io.github.ncr.spacewalk",
+        "License": "MIT",
+        "Name": "Spacewalk",
+        "Version": "0.1.0",
+        "Website": "https://github.com/ncr/omarchy-spacewalk"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
