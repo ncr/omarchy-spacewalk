@@ -16,8 +16,12 @@ activation="${XDG_DATA_HOME:-$HOME/.local/share}/dbus-1/services/io.github.ncr.S
 
 case "${1:-install}" in
 install)
-    python3 -c "import bleak, dbus_fast" 2>/dev/null || {
+    python3 -c "import bleak" 2>/dev/null || {
         echo "bleak is missing: sudo apt install python3-bleak (or pacman -S python-bleak)" >&2
+        exit 1
+    }
+    python3 -c "import dbus_fast" 2>/dev/null || {
+        echo "dbus-fast is missing: sudo apt install python3-dbus-fast (or pacman -S python-dbus-fast)" >&2
         exit 1
     }
     mkdir -p "$units" "$(dirname "$activation")"
