@@ -137,13 +137,13 @@ has not received yet. Already persisted steps survive either restart.
 Regression checks: `python3 -m unittest -v test_spacewalk.py` (uses a fake
 bridge, temporary state and a local Unix socket; does not control the belt).
 
-## On D-Bus, for other desktops
+## KDE Plasma, and other desktops on D-Bus
 
-The same bridge can also run as a systemd user service on the D-Bus session
-bus, for desktops whose widgets talk D-Bus rather than a Unix socket — KDE
-Plasma's QML among them. `kde/install-service.sh` sets it up;
-[docs/dbus.md](docs/dbus.md) describes the interface and how to use it from
-QML.
+On KDE Plasma 6 the same panel number and popup come as a Plasma widget:
+`kde/install.sh`, then add **Spacewalk** to a panel — see
+[kde/README.md](kde/README.md). Under it the bridge runs as a systemd user
+service on the D-Bus session bus, which other desktops' widgets can use too;
+[docs/dbus.md](docs/dbus.md) describes the interface.
 
 ## Who this is for
 
