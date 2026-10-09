@@ -933,6 +933,44 @@ class Radio:
                 await self.sync()
 
 
+class LinkWatch:
+    """Tells when an established link ends.
+
+    BlueZ sometimes aborts a connection attempt ("le-connection-abort-by-local");
+    bleak then retries, and calls disconnected_callback once for every aborted
+    attempt — before it hands over the connection that finally worked. Taken at
+    face value, those calls ended the session right after it began: two
+    packets, then a disconnect (2026-10-08, two to four aborts per connect).
+    So a disconnect counts only once the link is up."""
+
+    def __init__(self):
+        self.up = False
+        self.gone = asyncio.Event()
+
+    def on_disconnect(self, _client):
+        if self.up:
+            self.gone.set()
+
+
+@contextlib.asynccontextmanager
+async def link(client: BleakClient):
+    """`async with client`, except that taking the link down cannot fail.
+
+    When the other side has already dropped the link, bleak's disconnect call
+    often fails with a bare EOFError from dbus-fast (BlueZ: "No matching
+    connection for device") — every time on 2026-10-08. The link is gone
+    either way; the error only cut short the cleanup behind the session. It
+    goes to the log, not to the panel."""
+    await client.connect()
+    try:
+        yield client
+    finally:
+        try:
+            await client.disconnect()
+        except Exception as exc:
+            emit({"t": "lifecycle", "event": "unclean-disconnect", "error": repr(exc)})
+
+
 # ---------------------------------------------------------------- phone server
 
 def read_sessions() -> list[dict]:
@@ -1262,10 +1300,12 @@ class Bridge:
     async def heart_session(self, device, adv):
         name = adv.local_name or device.name or device.address
         self.publish_heart("connecting", device=name)
-        gone = asyncio.Event()
+        watch = LinkWatch()
+        gone = watch.gone
         try:
-            async with BleakClient(device, timeout=20.0,
-                                   disconnected_callback=lambda _client: gone.set()) as client:
+            async with link(BleakClient(device, timeout=20.0,
+                                        disconnected_callback=watch.on_disconnect)) as client:
+                watch.up = True
                 battery = None
                 try:
                     battery = bytes(await client.read_gatt_char(BATTERY_LEVEL))[0]
@@ -1801,13 +1841,12 @@ class Bridge:
             return False
         address = device.address
         status("connecting", address=address)
-        disconnected = asyncio.Event()
-
-        def on_disconnect(_client):
-            disconnected.set()
+        watch = LinkWatch()
 
         try:
-            async with BleakClient(device, timeout=30.0, disconnected_callback=on_disconnect) as client:
+            async with link(BleakClient(device, timeout=30.0,
+                                        disconnected_callback=watch.on_disconnect)) as client:
+                watch.up = True
                 self.client = client
                 self.has_control = False
                 # No new_session() here: the reference survives a reconnect on
@@ -1829,7 +1868,7 @@ class Bridge:
                     except BleakError as exc:
                         error(f"cannot subscribe to steps ({self.steps_uuid}): {exc}")
 
-                await disconnected.wait()
+                await watch.gone.wait()
 
         finally:
             self.client = None
@@ -1926,7 +1965,7 @@ class Bridge:
         tasks = [t for t in (stdin_task, conn_task, stop_task, save_task, heart_task, server_task) if t]
         for task in tasks:
             task.cancel()
-        # Cancelling the connection task unwinds `async with BleakClient`,
+        # Cancelling the connection task unwinds `async with link(...)`,
         # which asks BlueZ to drop the link. That takes a moment — leaving
         # before it is done keeps the link open just like a kill would.
         await asyncio.wait(tasks, timeout=5.0)
