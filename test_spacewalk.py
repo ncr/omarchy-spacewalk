@@ -571,6 +571,52 @@ class StateDirTestCase(unittest.TestCase):
             setattr(bridge, name, value)
 
 
+
+class LoopErrorTests(StateDirTestCase, unittest.IsolatedAsyncioTestCase):
+    """dbus-fast raises a bare EOFError, outside bleak's exceptions, when
+    BlueZ has already dropped the link. The loops must outlive it."""
+
+    def setUp(self):
+        super().setUp()
+        self.events = []
+        self.addCleanup(setattr, bridge, "emit", bridge.emit)
+        bridge.emit = lambda obj, log=True: self.events.append(obj)
+        self.bridge = bridge.Bridge(None, None, 0)
+
+    async def run_briefly(self, coroutine):
+        """Runs a loop for a moment and returns it, still running."""
+        task = asyncio.create_task(coroutine)
+        self.addCleanup(task.cancel)
+        await asyncio.sleep(0.05)
+        return task
+
+    def errors(self):
+        return [e["msg"] for e in self.events if e["t"] == "error"]
+
+    async def test_unexpected_error_does_not_end_the_connection_loop(self):
+        async def session():
+            raise EOFError()
+        self.bridge.session = session
+        task = await self.run_briefly(self.bridge.connection_loop())
+        self.assertFalse(task.done())
+        self.assertTrue(any("EOFError" in msg for msg in self.errors()), self.errors())
+
+    async def test_unexpected_error_does_not_end_the_strap_loop(self):
+        async def nothing():
+            pass
+
+        async def wait_for(match, patience, drives=True):
+            return "strap", None
+
+        async def heart_session(device, adv):
+            raise EOFError()
+        self.bridge.release_stale_strap = nothing
+        self.bridge.radio.wait_for = wait_for
+        self.bridge.heart_session = heart_session
+        task = await self.run_briefly(self.bridge.heart_loop())
+        self.assertFalse(task.done())
+        self.assertTrue(any("EOFError" in msg for msg in self.errors()), self.errors())
+
 class LogCapTests(StateDirTestCase):
     def setUp(self):
         super().setUp()
