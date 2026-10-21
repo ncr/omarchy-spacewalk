@@ -43,6 +43,7 @@ from pathlib import Path
 
 try:
     from bleak import BleakClient, BleakScanner
+    from bleak.assigned_numbers import AdvertisementDataType
     from bleak.exc import BleakError
 except ImportError:
     # Without bleak there is nothing to talk Bluetooth with. This error
@@ -885,6 +886,27 @@ class HeartDay:
 
 # ---------------------------------------------------------------------- radio
 
+def uuid16(uuid: str) -> bytes:
+    """A 16-bit service UUID as it goes on the air: little-endian."""
+    return bytes.fromhex(uuid[4:8])[::-1]
+
+
+# What a passive scan hands over: the treadmill by the service data FTMS
+# requires (the SpaceWalk sends 16 26 18 01 01 00), and a strap that lists the
+# Heart Rate service first. A pattern matches at a fixed offset only, so a
+# strap that lists it further on is not heard. Keep the list short: BlueZ 5.87
+# hands the patterns to this Intel controller and died of a buffer overflow
+# registering 8 of them, taking every link down with it; 4 worked
+# (2026-10-21).
+PASSIVE_PATTERNS = [
+    (0, AdvertisementDataType.SERVICE_DATA_UUID16, uuid16(FTMS_SERVICE)),
+    (0, AdvertisementDataType.COMPLETE_LIST_SERVICE_UUID16, uuid16(HEART_SERVICE)),
+    (0, AdvertisementDataType.INCOMPLETE_LIST_SERVICE_UUID16, uuid16(HEART_SERVICE)),
+]
+# How long a passive watch for the treadmill lasts before an active scan checks.
+IDLE_WATCH = 600.0
+
+
 class Radio:
     """One discovery shared by everyone waiting for a device.
 
@@ -892,11 +914,21 @@ class Radio:
     BleakScanner in one process fails in BlueZ with "Operation already in
     progress". A waiter with drives=False only listens in on a discovery
     someone else keeps running, and costs the radio nothing.
+
+    drives="passive" asks for a passive scan: BlueZ's advertisement monitor
+    with PASSIVE_PATTERNS, filtered in the controller. Nothing is sent on the
+    air, and the controller fits the listening around links and audio — the
+    background scan BlueZ already runs for devices it reconnects to. Cheap
+    enough to keep running for hours, unlike an active discovery. An active
+    waiter wins: its discovery hears everything a passive one would. bleak
+    reports every device BlueZ updates, matched or not, so match() still
+    decides.
     """
 
     def __init__(self):
         self.waiters: list[dict] = []
         self.scanner: BleakScanner | None = None
+        self.mode: str | None = None
         self.lock = asyncio.Lock()
 
     def on_detect(self, device, adv):
@@ -905,18 +937,27 @@ class Radio:
                 waiter["found"].set_result((device, adv))
 
     async def sync(self):
-        wanted = any(w["drives"] for w in self.waiters)
-        if wanted and self.scanner is None:
-            scanner = BleakScanner(detection_callback=self.on_detect)
-            await scanner.start()
-            self.scanner = scanner
-        elif not wanted and self.scanner is not None:
-            scanner, self.scanner = self.scanner, None
+        drives = {w["drives"] for w in self.waiters}
+        wanted = "active" if True in drives else "passive" if "passive" in drives else None
+        if wanted == self.mode:
+            return
+        if self.scanner is not None:
+            scanner, self.scanner, self.mode = self.scanner, None, None
             await scanner.stop()
+        if wanted == "active":
+            scanner = BleakScanner(detection_callback=self.on_detect)
+        elif wanted == "passive":
+            scanner = BleakScanner(detection_callback=self.on_detect, scanning_mode="passive",
+                                   bluez={"or_patterns": PASSIVE_PATTERNS})
+        else:
+            return
+        await scanner.start()
+        self.scanner, self.mode = scanner, wanted
 
-    async def wait_for(self, match, patience: float, drives: bool = True):
+    async def wait_for(self, match, patience: float, drives: bool | str = True):
         """The first (device, advertisement) that match() accepts, or None
-        once patience runs out."""
+        once patience runs out. drives: True runs an active scan, "passive"
+        a passive one, False only listens in."""
         waiter = {"match": match, "drives": drives,
                   "found": asyncio.get_running_loop().create_future()}
         try:
@@ -1336,7 +1377,9 @@ class Bridge:
         while True:
             # Looking for the strap is worth the radio only while the treadmill
             # is connected — a walk is about to start or under way. The rest of
-            # the time this just listens in on the scans for the treadmill.
+            # the time this just listens in on the scans for the treadmill —
+            # mostly the passive one, which hears a strap only when it lists
+            # the Heart Rate service first (PASSIVE_PATTERNS).
             treadmill_up = bool(self.client and self.client.is_connected)
             # "scanning" only when this loop runs the scan itself; listening in
             # is not something the panel has to tell anyone about.
@@ -1810,6 +1853,11 @@ class Bridge:
         if await bluetoothctl("disconnect", address, timeout=15.0) is None:
             error(f"could not release the stale link to {address}")
 
+    def is_treadmill(self, device, adv) -> bool:
+        if self.address:
+            return device.address.upper() == self.address.upper()
+        return FTMS_SERVICE in [u.lower() for u in (adv.service_uuids or [])]
+
     async def find_device(self, patience: float = 60.0):
         """A continuous scan instead of a one-shot query. The treadmill
         advertises only for a moment after power-on, so we listen non-stop and
@@ -1817,14 +1865,7 @@ class Bridge:
         so connecting by the address alone ends in "device not found"."""
         await self.release_stale_link(self.address)
         status("scanning")
-        want = (self.address or "").upper()
-
-        def is_treadmill(device, adv):
-            if want:
-                return device.address.upper() == want
-            return FTMS_SERVICE in [u.lower() for u in (adv.service_uuids or [])]
-
-        hit = await self.radio.wait_for(is_treadmill, patience)
+        hit = await self.radio.wait_for(self.is_treadmill, patience)
         if hit is None:
             return None
         device, adv = hit
@@ -1885,10 +1926,12 @@ class Bridge:
 
     async def connection_loop(self):
         attempt = 0
+        passive = True  # until BlueZ says it cannot scan passively
         while True:
-            found = False
+            found = missed = False
             try:
                 found = await self.session()
+                missed = not found
                 if found:
                     attempt = 0
             except (BleakError, asyncio.TimeoutError, OSError) as exc:
@@ -1900,9 +1943,26 @@ class Bridge:
                 error(f"connection failed: {exc!r}")
             if not found:
                 attempt += 1
-            # A powered-off treadmill is the normal state, not a failure: after
-            # a few empty tries we drop to one scan a minute, so Bluetooth is
-            # not hogged from other devices.
+            # A powered-off treadmill is the normal state, not a failure, and
+            # it advertises only for a moment after power-on. An active scan
+            # all the time would hog Bluetooth from other devices (headphones);
+            # scans with breaks were deaf in the breaks — a scan a minute
+            # heard half of every minute, and a power-on could fall into the
+            # other half (2026-10-21). So between active scans the radio
+            # listens passively, without a break, and the treadmill's first
+            # advertisement starts the next active scan at once. The passive
+            # watch ends now and then anyway: an active scan is the only check
+            # that holds when the controller's pattern filter misses the
+            # treadmill.
+            if missed and passive:
+                try:
+                    await self.radio.wait_for(self.is_treadmill, IDLE_WATCH, drives="passive")
+                    continue
+                except (BleakError, OSError) as exc:
+                    passive = False
+                    error(f"no passive scanning, scanning with breaks: {exc}")
+            # Without passive scanning, or after a failed connection: after a
+            # few empty tries one scan a minute, the old tradeoff.
             if attempt == 0:
                 delay = 5.0
             elif attempt < 5:

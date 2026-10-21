@@ -336,15 +336,23 @@ class FakeScanner:
     running = 0
     started = 0
     callbacks = []
+    modes = []
+    passive_fails = False
 
-    def __init__(self, detection_callback):
+    def __init__(self, detection_callback, scanning_mode="active", bluez=None):
         self.callback = detection_callback
+        self.mode = scanning_mode
+        if scanning_mode == "passive":
+            assert bluez["or_patterns"]
 
     async def start(self):
         if FakeScanner.running:
             raise RuntimeError("Operation already in progress")
+        if self.mode == "passive" and FakeScanner.passive_fails:
+            raise bridge.BleakError("passive scanning on Linux requires BlueZ >= 5.56")
         FakeScanner.running += 1
         FakeScanner.started += 1
+        FakeScanner.modes.append(self.mode)
         FakeScanner.callbacks.append(self.callback)
 
     async def stop(self):
@@ -361,6 +369,8 @@ class RadioTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         FakeScanner.running = FakeScanner.started = 0
         FakeScanner.callbacks = []
+        FakeScanner.modes = []
+        FakeScanner.passive_fails = False
         old = bridge.BleakScanner
         bridge.BleakScanner = FakeScanner
         self.addCleanup(setattr, bridge, "BleakScanner", old)
@@ -389,6 +399,64 @@ class RadioTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await strap, ("strap", None))
         self.assertIsNone(await treadmill)
         self.assertEqual(FakeScanner.running, 0)
+
+    async def test_passive_watch_scans_passively(self):
+        radio = bridge.Radio()
+        watch = asyncio.create_task(radio.wait_for(lambda d, a: d == "treadmill", 1,
+                                                   drives="passive"))
+        strap = asyncio.create_task(radio.wait_for(lambda d, a: d == "strap", 1, drives=False))
+        await asyncio.sleep(0.01)
+        self.assertEqual(FakeScanner.modes, ["passive"])
+        FakeScanner.advertise("strap")                 # the strap listens in on it
+        self.assertEqual(await strap, ("strap", None))
+        FakeScanner.advertise("treadmill")
+        self.assertEqual(await watch, ("treadmill", None))
+        self.assertEqual(FakeScanner.running, 0)
+
+    async def test_active_waiter_takes_over_from_a_passive_one(self):
+        radio = bridge.Radio()
+        watch = asyncio.create_task(radio.wait_for(lambda d, a: d == "treadmill", 1,
+                                                   drives="passive"))
+        await asyncio.sleep(0.01)
+        strap = asyncio.create_task(radio.wait_for(lambda d, a: d == "strap", 1))
+        await asyncio.sleep(0.01)
+        self.assertEqual(FakeScanner.modes, ["passive", "active"])
+        self.assertEqual(FakeScanner.running, 1)       # never two scans at once
+        FakeScanner.advertise("treadmill")             # the active scan serves the watch too
+        self.assertEqual(await watch, ("treadmill", None))
+        FakeScanner.advertise("strap")
+        await strap
+        self.assertEqual(FakeScanner.running, 0)
+
+    async def test_passive_watch_resumes_after_the_active_scan(self):
+        radio = bridge.Radio()
+        watch = asyncio.create_task(radio.wait_for(lambda d, a: d == "treadmill", 1,
+                                                   drives="passive"))
+        await asyncio.sleep(0.01)
+        self.assertIsNone(await radio.wait_for(lambda d, a: False, 0.02))
+        self.assertEqual(FakeScanner.modes, ["passive", "active", "passive"])
+        FakeScanner.advertise("treadmill")
+        self.assertEqual(await watch, ("treadmill", None))
+
+    async def test_failed_passive_scan_reaches_the_waiter(self):
+        FakeScanner.passive_fails = True
+        radio = bridge.Radio()
+        with self.assertRaises(bridge.BleakError):
+            await radio.wait_for(lambda d, a: True, 1, drives="passive")
+        self.assertEqual(radio.waiters, [])
+        self.assertIsNone(radio.scanner)
+
+    def test_passive_patterns_match_the_spacewalk(self):
+        # Service data of URTM024 as BlueZ saw it: 16 26 18 01 01 00.
+        self.assertIn((0, bridge.AdvertisementDataType.SERVICE_DATA_UUID16, b"\x26\x18"),
+                      bridge.PASSIVE_PATTERNS)
+        self.assertIn((0, bridge.AdvertisementDataType.COMPLETE_LIST_SERVICE_UUID16, b"\x0d\x18"),
+                      bridge.PASSIVE_PATTERNS)
+
+    def test_passive_patterns_stay_few(self):
+        # bluetoothd 5.87 crashed registering 8 patterns, 4 worked.
+        self.assertLessEqual(len(bridge.PASSIVE_PATTERNS), 4)
+        self.assertTrue(all(len(p[2]) <= 2 for p in bridge.PASSIVE_PATTERNS))
 
     async def test_cancelled_waiter_stops_the_scan(self):
         radio = bridge.Radio()
@@ -635,6 +703,50 @@ class LoopErrorTests(StateDirTestCase, unittest.IsolatedAsyncioTestCase):
         task = await self.run_briefly(self.bridge.connection_loop())
         self.assertFalse(task.done())
         self.assertTrue(any("EOFError" in msg for msg in self.errors()), self.errors())
+
+    async def idle_loop(self, passive_fails=False):
+        """Runs connection_loop against a treadmill that is never on the air,
+        and records how the radio is asked to look for it."""
+        calls = []
+        real_sleep = asyncio.sleep
+
+        async def session():
+            calls.append("scan")
+            return False
+
+        async def wait_for(match, patience, drives=True):
+            calls.append(drives)
+            if passive_fails:
+                raise bridge.BleakError("no advertisement monitor")
+            await real_sleep(0.01)
+            return None
+
+        async def sleep(delay):
+            calls.append(delay)
+            await real_sleep(0.01)
+        self.addCleanup(setattr, bridge.asyncio, "sleep", real_sleep)
+        bridge.asyncio.sleep = sleep
+        self.bridge.session = session
+        self.bridge.radio.wait_for = wait_for
+        task = asyncio.create_task(self.bridge.connection_loop())
+        self.addCleanup(task.cancel)
+        await real_sleep(0.1)
+        task.cancel()
+        bridge.asyncio.sleep = real_sleep
+        return calls
+
+    async def test_idle_treadmill_is_watched_without_a_break(self):
+        calls = await self.idle_loop()
+        # An active scan, then a passive watch straight away, and over again:
+        # no sleep in which the treadmill could power on unheard.
+        self.assertEqual(calls[:6], ["scan", "passive", "scan", "passive", "scan", "passive"])
+        self.assertFalse([c for c in calls if isinstance(c, float)], calls)
+
+    async def test_no_passive_scanning_falls_back_to_breaks(self):
+        calls = await self.idle_loop(passive_fails=True)
+        self.assertEqual(calls[:4], ["scan", "passive", 10.0, "scan"])
+        self.assertEqual(calls.count("passive"), 1)    # asked once, then left alone
+        self.assertTrue(any("passive" in msg for msg in self.errors()), self.errors())
 
     async def test_unexpected_error_does_not_end_the_strap_loop(self):
         async def nothing():
